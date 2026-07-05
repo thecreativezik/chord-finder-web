@@ -1,0 +1,35 @@
+{
+  "name": "chord-finder-web",
+  "version": "1.0.0",
+  "description": "Detect key, tempo, and chord progressions from any audio file — fully offline, in your browser.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit -p tsconfig.json",
+    "eval": "tsx scripts/eval-pipeline.ts"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "essentia.js": "^0.1.3",
+    "lucide-react": "^0.542.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "tonal": "^6.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.1.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.6.0",
+    "vite": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

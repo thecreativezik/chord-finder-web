@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/*
+ * Theme tokens mirror the semantic names used in the macOS (Glaze) app so the
+ * ported components keep their class names: bg-well, bg-control-subtle,
+ * border-separator, text-tertiary, bg-accent, text-accent-contrast, …
+ */
+:root {
+  --cf-accent: #2563eb;
+  --cf-accent-contrast: #ffffff;
+  --cf-background: #fafafa;
+  --cf-well: #efeff1;
+  --cf-control-subtle: #ececee;
+  --cf-control: #e2e2e5;
+  --cf-separator: #e3e3e6;
+  --cf-text-primary: #1b1b1f;
+  --cf-text-secondary: #47474d;
+  --cf-text-tertiary: #77777e;
+  --cf-text-quaternary: #a4a4ab;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cf-accent: #3b82f6;
+    --cf-accent-contrast: #ffffff;
+    --cf-background: #1c1c1f;
+    --cf-well: #131315;
+    --cf-control-subtle: #29292d;
+    --cf-control: #333338;
+    --cf-separator: #333338;
+    --cf-text-primary: #f2f2f4;
+    --cf-text-secondary: #c3c3c9;
+    --cf-text-tertiary: #8e8e95;
+    --cf-text-quaternary: #616167;
+  }
+}
+
+@theme inline {
+  --color-accent: var(--cf-accent);
+  --color-accent-contrast: var(--cf-accent-contrast);
+  --color-background: var(--cf-background);
+  --color-foreground: var(--cf-text-primary);
+  --color-well: var(--cf-well);
+  --color-control-subtle: var(--cf-control-subtle);
+  --color-control: var(--cf-control);
+  --color-separator: var(--cf-separator);
+  --color-primary: var(--cf-text-primary);
+  --color-secondary: var(--cf-text-secondary);
+  --color-tertiary: var(--cf-text-tertiary);
+  --color-quaternary: var(--cf-text-quaternary);
+}
+
+/* Text scale utilities carried over from the Glaze design system. */
+@utility text-mini {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+@utility text-mini-strong {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 600;
+}
+@utility text-small {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+@utility text-small-strong {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--cf-background);
+  color: var(--cf-text-primary);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Seek scrubber (native range input, accent themed). */
+input[type="range"].scrubber {
+  accent-color: var(--cf-accent);
+  height: 4px;
+  cursor: pointer;
+}
