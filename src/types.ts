@@ -26,20 +26,39 @@ export interface AnalysisResult {
 
 export type AnalysisStage = "decoding" | "extracting" | "chords" | "done";
 
+/**
+ * Stem-aware decoding mode. Harmonic sources use the full chord vocabulary;
+ * an isolated bass stem instead reports one pitch-class root per beat window.
+ */
+export type ChordAnalysisMode = "harmony" | "bass-root";
+
 export type AnalysisStatus =
   | { state: "idle" }
   | { state: "loading"; stage: AnalysisStage; progress: number; fileName: string }
-  | { state: "ready"; fileName: string; audioUrl: string; result: AnalysisResult }
+  | { state: "ready"; fileName: string; sourceFile: File; audioUrl: string; result: AnalysisResult }
   | { state: "error"; message: string };
 
 // ── Worker message protocol ───────────────────────────────────────────
-export interface AnalyzeRequest {
+export interface FullAnalyzeRequest {
+  mode: "full";
   channelData: Float32Array; // mono PCM, resampled to 44.1kHz
   sampleRate: number; // always 44100 (see use-analysis)
   durationSec: number;
 }
 
+export interface ChordAnalyzeRequest {
+  mode: "chords";
+  analysisMode: ChordAnalysisMode;
+  channelData: Float32Array;
+  sampleRate: number;
+  durationSec: number;
+  beats: number[];
+}
+
+export type AnalyzeRequest = FullAnalyzeRequest | ChordAnalyzeRequest;
+
 export type WorkerResponse =
   | { type: "progress"; stage: AnalysisStage; progress: number }
   | { type: "result"; result: AnalysisResult }
+  | { type: "chord-result"; segments: ChordSegment[] }
   | { type: "error"; message: string };

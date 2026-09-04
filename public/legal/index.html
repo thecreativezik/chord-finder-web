@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Source &amp; licenses — Chord Finder</title>
+    <style>
+      :root { color-scheme: dark; font-family: "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #0d0f0f; color: #f2f0e9; }
+      main { width: min(46rem, calc(100% - 2rem)); margin: 0 auto; padding: 3rem 0 5rem; }
+      h1 { margin: 1.5rem 0 0.75rem; font-size: clamp(2rem, 6vw, 3.4rem); letter-spacing: -0.055em; }
+      h2 { margin: 2rem 0 0.5rem; font-size: 1rem; }
+      p, li { color: #b7bbb7; line-height: 1.65; }
+      a { color: #e2ad69; text-underline-offset: 0.2em; }
+      .back { color: #858a86; font-size: 0.85rem; }
+      .panel { margin-top: 2rem; padding: 1.25rem; border: 1px solid #292d2c; border-radius: 0.75rem; background: #151818; }
+      ul { margin: 0.75rem 0 0; padding-left: 1.2rem; }
+      .warning { border-left: 3px solid #e2ad69; padding-left: 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="../">← Back to Chord Finder</a>
+      <h1>Source &amp; licenses</h1>
+      <p>
+        Chord Finder processes song audio on your device. The complete source corresponding to this public build is available in the
+        <a href="https://github.com/thecreativezik/chord-finder-web">public GitHub repository</a>.
+      </p>
+
+      <section class="panel">
+        <h2>Notices and full license texts</h2>
+        <ul>
+          <li><a href="THIRD_PARTY_NOTICES.md">Third-party notices and exact component provenance</a></li>
+          <li><a href="AGPL-3.0.txt">AGPL-3.0 — Chord Finder and Essentia.js</a></li>
+          <li><a href="MPL-2.0.txt">MPL-2.0 — SoundTouchJS full terms</a> · <a href="SoundTouchJS-LICENSE.txt">package notice</a></li>
+          <li><a href="LGPL-3.0.txt">LGPL-3.0 — lamejs terms</a> · <a href="GPL-3.0.txt">incorporated GPL-3.0 terms</a> · <a href="lamejs-LICENSE.txt">package notice</a></li>
+          <li><a href="Apache-2.0.txt">Apache-2.0 — demucs-rs browser runtime</a></li>
+        </ul>
+      </section>
+
+      <p class="warning">
+        Automatic separation is a WebGPU preview. The checkpoint is fetched only when requested, and its rights provenance requires independent review before production or commercial use.
+      </p>
+    </main>
+  </body>
+</html>

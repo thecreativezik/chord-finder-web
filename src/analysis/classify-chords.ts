@@ -47,7 +47,7 @@ export function hpcpToPitchClass(hpcp: Float32Array | number[]): Float32Array {
   return out;
 }
 
-interface AnalysisWindow {
+export interface AnalysisWindow {
   start: number;
   end: number;
 }
@@ -60,7 +60,7 @@ export interface ClassifyInput {
 }
 
 /** Build analysis windows from beats, falling back to fixed slices. */
-function buildWindows(beats: number[], durationSec: number): AnalysisWindow[] {
+export function buildAnalysisWindows(beats: number[], durationSec: number): AnalysisWindow[] {
   const sorted = beats.filter((b) => b >= 0 && b <= durationSec).sort((a, b) => a - b);
   if (sorted.length >= 2) {
     const windows: AnalysisWindow[] = [];
@@ -81,7 +81,7 @@ function buildWindows(beats: number[], durationSec: number): AnalysisWindow[] {
 }
 
 /** Mean chroma over the frames whose start time falls inside [start, end). */
-function averageChroma(
+export function averageChromaForWindow(
   frames: Float32Array[],
   frameTimes: number[],
   start: number,
@@ -128,7 +128,7 @@ function templateScores(chroma: Float32Array, scores: Float32Array): boolean {
 
 export function classifyChords(input: ClassifyInput): ChordSegment[] {
   const templates = buildTemplates();
-  const windows = buildWindows(input.beats, input.durationSec);
+  const windows = buildAnalysisWindows(input.beats, input.durationSec);
   const windowCount = windows.length;
   const stateCount = templates.length + 1; // + N.C.
   const ncState = templates.length;
@@ -141,7 +141,7 @@ export function classifyChords(input: ClassifyInput): ChordSegment[] {
   const scratch = new Float32Array(templates.length);
 
   for (const window of windows) {
-    const chroma = averageChroma(input.frames, input.frameTimes, window.start, window.end);
+    const chroma = averageChromaForWindow(input.frames, input.frameTimes, window.start, window.end);
     const raw = new Float32Array(stateCount);
     const logs = new Float32Array(stateCount);
     const hasSound = templateScores(chroma, scratch);

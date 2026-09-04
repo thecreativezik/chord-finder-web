@@ -7,8 +7,15 @@ import Essentia from "essentia.js/dist/essentia.js-core.es.js";
 import { EssentiaWASM } from "essentia.js/dist/essentia-wasm.es.js";
 
 import { classifyChords } from "./classify-chords";
+import { classifyBassRoots } from "./classify-bass-roots";
 import { estimateTuning, extractChromaFrames } from "./extract-chroma";
-import type { AnalysisResult, AnalyzeRequest, WorkerResponse } from "../types";
+import type {
+  AnalysisResult,
+  AnalyzeRequest,
+  ChordAnalysisMode,
+  ChordSegment,
+  WorkerResponse,
+} from "../types";
 
 let essentia: Essentia | null = null;
 
@@ -102,10 +109,49 @@ function analyze(
   };
 }
 
+function analyzeChords(
+  essentiaInstance: Essentia,
+  channelData: Float32Array,
+  sampleRate: number,
+  durationSec: number,
+  beats: number[],
+  analysisMode: ChordAnalysisMode,
+): ChordSegment[] {
+  post({ type: "progress", stage: "chords", progress: 0.05 });
+  const audioVector = essentiaInstance.arrayToVector(channelData);
+  const tuningHz = estimateTuning(essentiaInstance, audioVector);
+  tryDelete(audioVector);
+  const chroma = extractChromaFrames(essentiaInstance, channelData, sampleRate, tuningHz, (fraction) =>
+    post({ type: "progress", stage: "chords", progress: 0.08 + 0.9 * fraction }),
+  );
+  const classify = analysisMode === "bass-root" ? classifyBassRoots : classifyChords;
+  const segments = classify({
+    frames: chroma.frames,
+    frameTimes: chroma.frameTimes,
+    beats,
+    durationSec,
+  });
+  post({ type: "progress", stage: "done", progress: 1 });
+  return segments;
+}
+
 self.onmessage = (event: MessageEvent<AnalyzeRequest>) => {
-  const { channelData, sampleRate, durationSec } = event.data;
+  const request = event.data;
+  const { channelData, sampleRate, durationSec } = request;
   try {
     if (!essentia) essentia = new Essentia(EssentiaWASM);
+    if (request.mode === "chords") {
+      const segments = analyzeChords(
+        essentia,
+        channelData,
+        sampleRate,
+        durationSec,
+        request.beats,
+        request.analysisMode,
+      );
+      post({ type: "chord-result", segments });
+      return;
+    }
     const result = analyze(essentia, channelData, sampleRate, durationSec);
     post({ type: "result", result });
   } catch (error) {

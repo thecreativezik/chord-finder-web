@@ -20,6 +20,8 @@ interface UseMetronomeInput {
   beats: number[];
   isPlaying: boolean;
   playbackRate: number;
+  /** SoundTouch delay expressed in the same source-time units as beat times. */
+  sourceLatencySec?: number;
 }
 
 export interface Metronome {
@@ -40,6 +42,29 @@ function firstAfter(points: ClickPoint[], time: number): number {
     else hi = mid;
   }
   return lo;
+}
+
+/**
+ * Source-timeline position feeding the click scheduler.
+ *
+ * Unlike the visual playhead, this must not hold at a play/seek target while
+ * SoundTouch fills its first window. A negative value at the start of a song
+ * is intentional: it schedules a beat at 0 after the processor's real delay.
+ */
+export function metronomeSourceTime(rawTime: number, sourceLatencySec: number): number {
+  const safeRawTime = Number.isFinite(rawTime) ? rawTime : 0;
+  const safeLatency = Number.isFinite(sourceLatencySec) ? Math.max(0, sourceLatencySec) : 0;
+  return safeRawTime - safeLatency;
+}
+
+export function metronomeDelayUntilBeat(
+  beatTime: number,
+  rawTime: number,
+  sourceLatencySec: number,
+  playbackRate: number,
+): number {
+  const safeRate = Number.isFinite(playbackRate) ? Math.max(0.1, playbackRate) : 1;
+  return Math.max(0, (beatTime - metronomeSourceTime(rawTime, sourceLatencySec)) / safeRate);
 }
 
 function buildClickPoints(beats: number[], density: MetronomeDensity): ClickPoint[] {
@@ -70,7 +95,10 @@ function scheduleClick(
   const gain = context.createGain();
   oscillator.type = "sine";
   oscillator.frequency.value = accent ? 1320 : 880;
-  gain.gain.setValueAtTime(Math.max(0.0001, volume * (accent ? 0.34 : 0.22)), when);
+  gain.gain.setValueAtTime(
+    Math.max(0.0001, Math.min(1, volume * (accent ? 0.72 : 0.5))),
+    when,
+  );
   gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
   oscillator.connect(gain);
   gain.connect(context.destination);
@@ -95,10 +123,11 @@ export function useMetronome({
   beats,
   isPlaying,
   playbackRate,
+  sourceLatencySec = 0,
 }: UseMetronomeInput): Metronome {
   const [enabled, setEnabled] = useState(false);
   const [density, setDensity] = useState<MetronomeDensity>(1);
-  const [volume, setVolumeState] = useState(0.7);
+  const [volume, setVolumeState] = useState(1);
   const contextRef = useRef<AudioContext | null>(null);
   const clickPoints = useMemo(() => buildClickPoints(beats, density), [beats, density]);
 
@@ -113,7 +142,7 @@ export function useMetronome({
   }, [enabled]);
 
   const setVolume = useCallback((next: number) => {
-    setVolumeState(Math.max(0, Math.min(1, next)));
+    setVolumeState(Math.max(0, Math.min(1.5, next)));
   }, []);
 
   useEffect(() => {
@@ -121,7 +150,8 @@ export function useMetronome({
     const context = contextRef.current;
     if (!context) return;
 
-    let lastAudioTime = audio.currentTime;
+    const schedulerTime = () => metronomeSourceTime(audio.currentTime, sourceLatencySec);
+    let lastAudioTime = schedulerTime();
     let nextIndex = firstAfter(clickPoints, lastAudioTime - 0.01);
     const scheduled = new Set<ScheduledClick>();
 
@@ -132,13 +162,14 @@ export function useMetronome({
 
     const resetCursor = () => {
       cancelScheduled();
-      lastAudioTime = audio.currentTime;
+      lastAudioTime = schedulerTime();
       nextIndex = firstAfter(clickPoints, lastAudioTime - 0.01);
     };
 
     const schedule = () => {
       if (audio.seeking) return;
-      const audioTime = audio.currentTime;
+      const rawTime = audio.currentTime;
+      const audioTime = metronomeSourceTime(rawTime, sourceLatencySec);
       // A seek or A/B loop invalidates the old cursor; restart from the new position.
       if (audioTime < lastAudioTime - 0.08 || audioTime > lastAudioTime + 0.5) {
         resetCursor();
@@ -149,7 +180,7 @@ export function useMetronome({
         const point = clickPoints[nextIndex];
         // Never bunch overdue beats together after a delayed timer or short seek.
         if (point.time >= audioTime - 0.02) {
-          const delay = Math.max(0, (point.time - audioTime) / playbackRate);
+          const delay = metronomeDelayUntilBeat(point.time, rawTime, sourceLatencySec, playbackRate);
           const click = scheduleClick(context, context.currentTime + delay, point.accent, volume);
           scheduled.add(click);
           click.oscillator.addEventListener("ended", () => {
@@ -164,7 +195,8 @@ export function useMetronome({
     };
 
     audio.addEventListener("seeking", cancelScheduled);
-    audio.addEventListener("seeked", resetCursor);
+    const onSeeked = () => resetCursor();
+    audio.addEventListener("seeked", onSeeked);
     audio.addEventListener("pause", cancelScheduled);
     audio.addEventListener("ended", cancelScheduled);
     schedule();
@@ -172,12 +204,12 @@ export function useMetronome({
     return () => {
       window.clearInterval(interval);
       audio.removeEventListener("seeking", cancelScheduled);
-      audio.removeEventListener("seeked", resetCursor);
+      audio.removeEventListener("seeked", onSeeked);
       audio.removeEventListener("pause", cancelScheduled);
       audio.removeEventListener("ended", cancelScheduled);
       cancelScheduled();
     };
-  }, [audio, clickPoints, enabled, isPlaying, playbackRate, volume]);
+  }, [audio, clickPoints, enabled, isPlaying, playbackRate, sourceLatencySec, volume]);
 
   useEffect(() => {
     return () => {

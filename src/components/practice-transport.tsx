@@ -6,6 +6,7 @@ import {
   PlayIcon,
   Repeat2Icon,
   RewindIcon,
+  Volume2Icon,
   XIcon,
 } from "lucide-react";
 
@@ -136,6 +137,23 @@ export function PracticeTransport({
               </label>
             ))}
           </fieldset>
+          <label className="flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-separator bg-control-subtle px-2" title="Click volume">
+            <Volume2Icon className="size-3.5 text-tertiary" aria-hidden="true" />
+            <span className="sr-only">Click volume</span>
+            <input
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.05}
+              value={metronome.volume}
+              onChange={(event) => metronome.setVolume(Number(event.target.value))}
+              className="h-1 w-20 cursor-pointer accent-current sm:w-24"
+              aria-valuetext={`${Math.round(metronome.volume * 100)} percent`}
+            />
+            <output className="w-7 text-right text-[9px] tabular-nums text-tertiary" aria-hidden="true">
+              {Math.round(metronome.volume * 100)}
+            </output>
+          </label>
 
           <span className="mx-1 h-5 w-px shrink-0 bg-separator" />
           <Repeat2Icon className={cn("size-3.5 shrink-0", loopReady ? "text-accent" : "text-tertiary")} />

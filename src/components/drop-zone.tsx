@@ -1,6 +1,6 @@
 // File import: drag-and-drop plus a browser file picker.
 
-import { useCallback, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { MusicIcon } from "lucide-react";
 
 const ACCEPT = ".mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.aiff,.aif,audio/*";
@@ -25,6 +25,29 @@ export interface UseFileImport {
 export function useFileImport({ onFile }: FileImportHandlers): UseFileImport {
   const [isDragging, setIsDragging] = useState(false);
   const depth = useRef(0);
+  const pickerRef = useRef<HTMLInputElement | null>(null);
+  const onFileRef = useRef(onFile);
+  onFileRef.current = onFile;
+
+  useEffect(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ACCEPT;
+    input.hidden = true;
+    input.setAttribute("aria-hidden", "true");
+    input.tabIndex = -1;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) onFileRef.current(file);
+      input.value = "";
+    };
+    document.body.append(input);
+    pickerRef.current = input;
+    return () => {
+      pickerRef.current = null;
+      input.remove();
+    };
+  }, []);
 
   const onDragEnter = useCallback((event: DragEvent) => {
     event.preventDefault();
@@ -57,15 +80,8 @@ export function useFileImport({ onFile }: FileImportHandlers): UseFileImport {
   );
 
   const openPicker = useCallback(() => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ACCEPT;
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (file) onFile(file);
-    };
-    input.click();
-  }, [onFile]);
+    pickerRef.current?.click();
+  }, []);
 
   return { isDragging, dragProps: { onDragEnter, onDragOver, onDragLeave, onDrop }, openPicker };
 }

@@ -5,7 +5,10 @@
 // the other chord tones. The piano itself keeps fixed white/dark key colors
 // (it depicts a physical object; theme tokens are used for everything else).
 
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+
 import { cn } from "../cn";
+import { usePianoSynth } from "./use-piano-synth";
 
 const WHITE_PCS = [0, 2, 4, 5, 7, 9, 11]; // C D E F G A B
 const WHITE_LABELS = ["C", "D", "E", "F", "G", "A", "B"];
@@ -66,7 +69,7 @@ function NoteDot({ note }: { note: PlacedNote }) {
   return (
     <div
       className={cn(
-        "pointer-events-none absolute flex size-7 -translate-x-1/2 items-center justify-center rounded-full border-2 border-accent text-mini-strong",
+        "pointer-events-none absolute z-20 flex size-7 -translate-x-1/2 items-center justify-center rounded-full border-2 border-accent text-mini-strong",
         note.isRoot ? "bg-accent text-accent-contrast" : "bg-background text-foreground",
       )}
       style={{
@@ -82,43 +85,124 @@ function NoteDot({ note }: { note: PlacedNote }) {
 
 export function Piano2D({ notes, rootPc, className }: Piano2DProps) {
   const placed = placeNotes(notes, rootPc);
+  const synth = usePianoSynth();
+  const activePresses = useRef(new Map<string, number>());
+  const [pressedMidis, setPressedMidis] = useState<ReadonlySet<number>>(() => new Set());
   const noteNames = notes.map((note) => note.name.replace("#", "sharp ").replace("b", "flat "));
   const pianoLabel = noteNames.length
     ? `Piano diagram. Root ${noteNames[0]}. Chord notes ${noteNames.join(", ")}.`
     : "Piano diagram. No chord notes at the playhead.";
 
+  const syncPressedMidis = () => {
+    setPressedMidis(new Set(activePresses.current.values()));
+  };
+
+  const startNote = (pressId: string, midi: number) => {
+    if (activePresses.current.has(pressId)) return;
+    activePresses.current.set(pressId, midi);
+    syncPressedMidis();
+    synth.noteOn(midi, pressId);
+  };
+
+  const stopNote = (pressId: string) => {
+    const midi = activePresses.current.get(pressId);
+    if (midi === undefined) return;
+    activePresses.current.delete(pressId);
+    syncPressedMidis();
+    synth.noteOff(midi, pressId);
+  };
+
+  const onPointerDown = (midi: number, event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    startNote(`pointer:${event.pointerId}`, midi);
+  };
+
+  const onPointerEnd = (event: PointerEvent<HTMLButtonElement>) => {
+    stopNote(`pointer:${event.pointerId}`);
+  };
+
+  const onKeyDown = (midi: number, event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.repeat || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    startNote(`keyboard:${midi}`, midi);
+  };
+
+  const onKeyUp = (midi: number, event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    stopNote(`keyboard:${midi}`);
+  };
+
   return (
     <div
       data-piano
-      role="img"
+      role="group"
       aria-label={pianoLabel}
       className={cn("flex w-full flex-col items-center gap-3", className)}
     >
       <div className="relative aspect-[7/2] w-full max-w-4xl select-none">
         {/* White keys */}
-        {Array.from({ length: WHITE_COUNT }, (_, i) => (
-          <div
-            key={`w${i}`}
-            className="absolute top-0 h-full rounded-b-md border border-neutral-300 bg-white"
-            style={{ left: `${i * WHITE_W}%`, width: `${WHITE_W}%` }}
-          >
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-mini text-neutral-400">
-              {WHITE_LABELS[i % 7]}
-            </span>
-          </div>
-        ))}
+        {Array.from({ length: WHITE_COUNT }, (_, i) => {
+          const octave = Math.floor(i / 7);
+          const pc = WHITE_PCS[i % 7];
+          const midi = 48 + octave * 12 + pc;
+          const label = `${WHITE_LABELS[i % 7]}${octave + 3}`;
+          return (
+            <button
+              type="button"
+              key={`w${i}`}
+              className={cn(
+                "absolute top-0 h-full touch-none rounded-b-md border border-neutral-300 bg-white transition-[background-color,transform] focus-visible:z-30 focus-visible:outline-2 focus-visible:outline-accent",
+                pressedMidis.has(midi) && "bg-amber-100 [transform:translateY(2px)]",
+              )}
+              style={{ left: `${i * WHITE_W}%`, width: `${WHITE_W}%` }}
+              aria-label={`Play ${label}`}
+              aria-pressed={pressedMidis.has(midi)}
+              onPointerDown={(event) => onPointerDown(midi, event)}
+              onPointerUp={onPointerEnd}
+              onPointerCancel={onPointerEnd}
+              onLostPointerCapture={onPointerEnd}
+              onKeyDown={(event) => onKeyDown(midi, event)}
+              onKeyUp={(event) => onKeyUp(midi, event)}
+              onBlur={() => stopNote(`keyboard:${midi}`)}
+            >
+              <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-mini text-neutral-400">
+                {WHITE_LABELS[i % 7]}
+              </span>
+            </button>
+          );
+        })}
         {/* Black keys */}
         {Array.from({ length: OCTAVES }, (_, oct) =>
-          Object.entries(BLACK_AFTER_WHITE).map(([pc, after]) => (
-            <div
-              key={`b${oct}-${pc}`}
-              className="absolute top-0 h-[62%] rounded-b-md bg-neutral-800"
-              style={{
-                left: `${(oct * 7 + after + 1) * WHITE_W - BLACK_W / 2}%`,
-                width: `${BLACK_W}%`,
-              }}
-            />
-          )),
+          Object.entries(BLACK_AFTER_WHITE).map(([pcString, after]) => {
+            const pc = Number(pcString);
+            const midi = 48 + oct * 12 + pc;
+            const sharpName = ["", "C♯", "", "D♯", "", "", "F♯", "", "G♯", "", "A♯"][pc];
+            return (
+              <button
+                type="button"
+                key={`b${oct}-${pc}`}
+                className={cn(
+                  "absolute top-0 z-10 h-[62%] touch-none rounded-b-md border border-neutral-950 bg-neutral-800 transition-[background-color,transform] focus-visible:z-30 focus-visible:outline-2 focus-visible:outline-accent",
+                  pressedMidis.has(midi) && "bg-neutral-600 [transform:translateY(2px)]",
+                )}
+                style={{
+                  left: `${(oct * 7 + after + 1) * WHITE_W - BLACK_W / 2}%`,
+                  width: `${BLACK_W}%`,
+                }}
+                aria-label={`Play ${sharpName}${oct + 3}`}
+                aria-pressed={pressedMidis.has(midi)}
+                onPointerDown={(event) => onPointerDown(midi, event)}
+                onPointerUp={onPointerEnd}
+                onPointerCancel={onPointerEnd}
+                onLostPointerCapture={onPointerEnd}
+                onKeyDown={(event) => onKeyDown(midi, event)}
+                onKeyUp={(event) => onKeyUp(midi, event)}
+                onBlur={() => stopNote(`keyboard:${midi}`)}
+              />
+            );
+          }),
         )}
         {/* Chord dots */}
         {placed.map((note, i) => (
@@ -136,6 +220,7 @@ export function Piano2D({ notes, rootPc, className }: Piano2DProps) {
           <span className="inline-block size-3.5 rounded-full border-2 border-accent bg-background" />
           Chord note
         </span>
+        <span className="hidden text-mini text-tertiary sm:inline">Click any key to hear it</span>
       </div>
     </div>
   );

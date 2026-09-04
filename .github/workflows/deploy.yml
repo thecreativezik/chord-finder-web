@@ -1,12 +1,12 @@
 # Deploys the site to GitHub Pages.
 #
-# Trigger manually (Actions tab → Deploy to GitHub Pages → Run workflow) after
-# enabling Pages for the repo: Settings → Pages → Source: GitHub Actions.
-# Switch `workflow_dispatch` to `push: branches: [main]` for auto-deploys.
+# Publishes every verified main-branch update and also supports a manual rerun.
 
 name: Deploy to GitHub Pages
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

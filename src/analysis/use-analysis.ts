@@ -7,39 +7,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { AnalysisStatus, AnalyzeRequest, WorkerResponse } from "../types";
-
-const TARGET_SAMPLE_RATE = 44100;
-
-interface DecodedAudio {
-  channelData: Float32Array;
-  durationSec: number;
-}
-
-async function decodeToMono(arrayBuffer: ArrayBuffer): Promise<DecodedAudio> {
-  const decodeContext = new AudioContext();
-  let decoded: AudioBuffer;
-  try {
-    decoded = await decodeContext.decodeAudioData(arrayBuffer);
-  } finally {
-    await decodeContext.close();
-  }
-
-  // Resample to a fixed 44.1kHz mono buffer so the worker can rely on
-  // essentia's default sample rate, and stereo is downmixed automatically.
-  const frameCount = Math.max(1, Math.ceil(decoded.duration * TARGET_SAMPLE_RATE));
-  const offline = new OfflineAudioContext(1, frameCount, TARGET_SAMPLE_RATE);
-  const source = offline.createBufferSource();
-  source.buffer = decoded;
-  source.connect(offline.destination);
-  source.start();
-  const rendered = await offline.startRendering();
-
-  return {
-    channelData: rendered.getChannelData(0).slice(),
-    durationSec: rendered.duration,
-  };
-}
+import { decodeAudioMono, SESSION_SAMPLE_RATE } from "../audio/decode-audio";
+import type {
+  AnalysisStatus,
+  AnalyzeRequest,
+  ChordAnalysisMode,
+  ChordSegment,
+  WorkerResponse,
+} from "../types";
 
 export interface UseAnalysis {
   status: AnalysisStatus;
@@ -97,9 +72,9 @@ export function useAnalysis(): UseAnalysis {
 
       setStatus({ state: "loading", stage: "decoding", progress: 0, fileName: file.name });
 
-      let decoded: DecodedAudio;
+      let decoded: Awaited<ReturnType<typeof decodeAudioMono>>;
       try {
-        decoded = await decodeToMono(await file.arrayBuffer());
+        decoded = await decodeAudioMono(file);
       } catch (error) {
         if (requestId !== requestIdRef.current) return;
         console.error("[chord-finder] Failed to decode audio:", error);
@@ -134,9 +109,14 @@ export function useAnalysis(): UseAnalysis {
             fileName: file.name,
           });
         } else if (message.type === "result") {
-          setStatus({ state: "ready", fileName: file.name, audioUrl, result: message.result });
+          setStatus({ state: "ready", fileName: file.name, sourceFile: file, audioUrl, result: message.result });
+          cleanupWorker();
+        } else if (message.type === "chord-result") {
+          revokeUrl();
+          setStatus({ state: "error", message: "The analysis worker returned an unexpected result." });
           cleanupWorker();
         } else {
+          revokeUrl();
           setStatus({ state: "error", message: message.message });
           cleanupWorker();
         }
@@ -144,13 +124,15 @@ export function useAnalysis(): UseAnalysis {
 
       worker.onerror = (event) => {
         if (requestId !== requestIdRef.current) return;
+        revokeUrl();
         setStatus({ state: "error", message: event.message || "Analysis failed." });
         cleanupWorker();
       };
 
       const request: AnalyzeRequest = {
+        mode: "full",
         channelData: decoded.channelData,
-        sampleRate: TARGET_SAMPLE_RATE,
+        sampleRate: SESSION_SAMPLE_RATE,
         durationSec: decoded.durationSec,
       };
       worker.postMessage(request, [request.channelData.buffer]);
@@ -159,4 +141,55 @@ export function useAnalysis(): UseAnalysis {
   );
 
   return { status, analyzeFile, reset };
+}
+
+/** Analyze harmony for an aligned stem while preserving the master beat grid. */
+export async function analyzeChordBlob(
+  blob: Blob,
+  beats: number[],
+  onProgress?: (progress: number) => void,
+  signal?: AbortSignal,
+  analysisMode: ChordAnalysisMode = "harmony",
+): Promise<ChordSegment[]> {
+  const decoded = await decodeAudioMono(blob);
+  if (signal?.aborted) throw new DOMException("Chord analysis cancelled", "AbortError");
+
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./analysis.worker.ts", import.meta.url), { type: "module" });
+    const finish = () => {
+      worker.terminate();
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      finish();
+      reject(new DOMException("Chord analysis cancelled", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const message = event.data;
+      if (message.type === "progress") {
+        onProgress?.(message.progress);
+      } else if (message.type === "chord-result") {
+        finish();
+        resolve(message.segments);
+      } else if (message.type === "error") {
+        finish();
+        reject(new Error(message.message));
+      }
+    };
+    worker.onerror = (event) => {
+      finish();
+      reject(new Error(event.message || "Stem chord analysis failed."));
+    };
+    const request: AnalyzeRequest = {
+      mode: "chords",
+      analysisMode,
+      channelData: decoded.channelData,
+      sampleRate: SESSION_SAMPLE_RATE,
+      durationSec: decoded.durationSec,
+      beats,
+    };
+    worker.postMessage(request, [request.channelData.buffer]);
+  });
 }

@@ -10,13 +10,16 @@ Chord Finder should become a **chord-first practice studio**, not a smaller clon
 The best near-term product is:
 
 1. Analyze a song locally.
-2. Let an instrumentalist see and correct its chords.
-3. Let them slow it down, loop a difficult range, hear a detected-beat-synchronized click, and choose capo-relative chord symbols.
-4. Let them import separated stems from any provider and practice against a transport-linked custom mix.
-5. Add automatic separation only through a measured local-model experiment or a secure queued backend.
-6. Add generation only when it is section-scoped, chord-aware, non-destructive, and honest about provenance.
+2. Let an instrumentalist see and correct its chords, scale-degree numbers, and solfa, then audition notes on a playable keyboard.
+3. Let them slow it down, transpose the whole session, loop a difficult range, hear a detected-beat-synchronized click, and choose capo-relative chord symbols.
+4. Separate the source locally into six broad instrument stems, or import already aligned stems, and practice against a custom mix.
+5. Let harmonic stems drive the chord lane and let bass drive an explicitly root-only lane, while the original beat grid remains the transport clock.
+6. Export the audible practice mix to WAV or MP3.
+7. Add generation only when it is section-scoped, chord-aware, non-destructive, and honest about provenance.
 
-This pass implements steps 2–4 as a real vertical slice. It does **not** add a decorative “AI separate” or “generate” button that cannot complete the job.
+This pass implements steps 1–6 as a local-first vertical slice. It does **not**
+claim raw-audio ingestion from commercial streaming services, and it still does
+not add a decorative “generate” control without a working generation provider.
 
 ## What Moises actually offers
 
@@ -43,14 +46,14 @@ That relationship is more valuable than copying Moises's colors, icons, dimensio
 
 | Area | Observed Moises capability | Chord Finder interpretation | Delivery |
 | --- | --- | --- | --- |
-| Stem separation | Automatic and custom source separation; detailed vocals, guitars, drums, bass, keys, strings, winds, and percussion; Hi-Fi option | Quick “practice guitar/bass/drums/vocals” presets plus Advanced stem selection | Next — Release 2 |
-| Stem hierarchy | The original remains intact and resulting stems appear as child tracks | Non-destructive source → separation job → stem family with provenance | Next — Release 2 |
+| Stem separation | Automatic and custom source separation; detailed vocals, guitars, drums, bass, keys, strings, winds, and percussion; Hi-Fi option | Local six-source preview for drums, bass, vocals, guitar, piano/keys, and other; broader custom taxonomy needs another engine | Now — WebGPU beta |
+| Stem hierarchy | The original remains intact and resulting stems appear as child tracks | Non-destructive original plus labeled, aligned separated/imported tracks | Now |
 | Practice mix | Per-stem volume, mute, solo, and pan | Transport-linked mixer with saved presets such as “Hear my part” and “Backing band” | Now — base shipped; presets Release 1 |
 | Stem generation | Drums, bass, guitar, keys, and strings generated from project context, presets, prompts, or references | Generate a chord-aware backing part for one selected section; audio or MIDI | Later — Release 3 |
 | Generation control | Follow strength, conditioning, Use Project Chords, Hi-Fi, preview model, and MIDI options | Basic preset first; advanced creativity/context controls behind disclosure | Later — Release 3 |
 | Regeneration | Selected ranges produce labeled alternative takes | “Try another take” creates an A/B variant and never overwrites a good result | Later — Release 3 |
-| Chord detection | Multiple complexity levels, current/next, strip, beat grid, diagrams, corrections | Easy/standard/extended vocabulary; piano/guitar/bass views; beat-snapped edits | Now — base/editing shipped; more views Release 1 |
-| Capo and transposition | Capo shapes, key shifting, notation settings | Preserve concert chord separately from the displayed capo-relative symbol | Now — symbol shipped; audio pitch shift Release 1 |
+| Chord detection | Multiple complexity levels, current/next, strip, beat grid, diagrams, corrections | Editable chord lane, stem-aware harmony/root analysis, playable piano plus guitar/bass fretboards, and number/solfa context | Now — core shipped |
+| Capo and transposition | Capo shapes, key shifting, notation settings | Preserve the analyzed chord separately while transposing displayed chords, playback audio, keyboard context, and exported mix | Now |
 | Practice transport | Speed, pitch/key, Smart Metronome, subdivisions, count-in, looping | One persistent practice cockpit with speed, A/B or section loops, click, key, count-in | Now — speed/loop/click shipped; rest Release 1 |
 | Sections | AI Intro/Verse/Chorus markers and adjacent-section loops | Detect or author named regions; use them for practice, navigation, and generation | Next — Release 1 |
 | Lyrics | AI lyric transcription and chord-synchronized lyric views | Optional lyrics lane; no need to block the instrumental workflow | Later |
@@ -59,7 +62,8 @@ That relationship is more valuable than copying Moises's colors, icons, dimensio
 | Editing | Split, trim, crop, fade, reverse, move, time/pitch, automation | Keep only practice-relevant clip/range editing before growing toward DAW scope | Later / selective |
 | Mix/master | Effects, genre Auto Mix, channel strips, mastering profiles | Practice-mix presets and limiter first; full effect chains are not core | Later / selective |
 | Collaboration | Link sharing, permissions, live cursors, timestamped comments, version history | Teacher/bandmate annotations at a chord or timestamp; shared setlists | Later — Release 3 |
-| Export | Mix, tracks/stems, chords, MIDI/MusicXML/project; multiple audio formats and rates | Export chord chart, corrected session JSON, MIDI, custom practice mix, individual stems | Next — Releases 1–2 |
+| Export | Mix, tracks/stems, chords, MIDI/MusicXML/project; multiple audio formats and rates | Export the audible custom mix as WAV or 256 kbps MP3; charts, session data, MIDI, and individual-stem bundles remain future work | Now — audio mix; more later |
+| Music-service import | Link/media import exists on supported Moises surfaces | Open Spotify, Apple Music, TIDAL, or YouTube catalog searches without extracting protected streams; local file remains required for analysis/remixing | Now — catalog links only |
 | Setlists | Rehearsal organization and collaboration | Saved per-song practice settings and ordered rehearsal sets | Next — Release 1 |
 | Voice conversion | Searchable voices, filtering, previews, favorites, and reversible converted takes | The browse/preview/apply pattern is useful; voice conversion itself is not core | Defer |
 | Sample generation | Prompt/context-based samples inserted into the project | Consider only after chord-aware backing parts prove useful | Defer |
@@ -177,42 +181,54 @@ Chord Finder should retain persistent playback state while switching views and u
 
 ## Separation implementation decision
 
-### Why it is not bundled in this pass
+### Shipped local-preview engine
 
-The repository is currently a static GitHub Pages SPA. High-quality music separation has materially different requirements from chord analysis:
+The implemented beta uses the browser build of
+[`demucs-rs`](https://github.com/nikhilunni/demucs-rs) rather than the larger
+four-source ONNX route considered earlier. Its WebGPU worker and WASM runtime
+are vendored from release `v0.3.4`, whose tag resolves to commit
+`97adfaae52e006be1557405bfc7b10614d805a78`, and recorded with exact hashes in
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-- [`demucs-web`](https://github.com/timcsy/demucs-web) packages an approximately 172 MB HTDemucs ONNX model for four stems. Its documentation requires cross-origin isolation headers for the intended worker/thread setup; at the research date, its public repository showed four commits.
-- The official [ONNX Runtime Web documentation](https://onnxruntime.ai/docs/tutorials/web/) supports WebGPU and WASM, but coverage and operator execution vary by browser. A robust product still needs capability detection, WASM fallback, memory/error handling, model caching, cancellation, and performance telemetry.
-- [`demucs-rs`](https://github.com/nikhilunni/demucs-rs) is a promising local Rust/WASM/WebGPU path, but it is not yet a drop-in browser dependency for this app.
-- [`scnet-web-wasm`](https://github.com/elicwhite/scnet-web-wasm) demonstrates a smaller browser model; at the research date, its public repository showed two commits, so it still needs independent quality and device testing before product use.
+On first use, the browser downloads the pinned `htdemucs_6s.safetensors`
+checkpoint directly from Hugging Face. The app verifies the expected
+54,890,960-byte file with SHA-256, caches it in IndexedDB, resamples the source
+to stereo 44.1 kHz, and runs the job locally in a worker. It produces six
+aligned WAV assets: drums, bass, other, vocals, guitar, and piano/keys. The
+original is retained, stem creation is non-destructive, and the UI provides
+phase progress and cancellation.
 
-Shipping one of these immediately would add a very large initial/model download and uncertain mobile behavior to a fast local chord tool. The current Vite/GitHub Pages configuration also contains no COOP/COEP header setup required by the documented threaded path.
+This is deliberately labeled a beta:
 
-### Recommended separation architecture
+- it requires a secure context and WebGPU, currently targeted at desktop Chrome/Edge; there is no CPU/mobile fallback;
+- inference is slow and memory-intensive, and the app rejects jobs whose conservative total-job estimate exceeds 1,200 MiB while suggesting a safe trim/split length (typically about 2½–3 minutes, because the WASM bridge temporarily retains two copies of the six-stem Float32 result);
+- all source-separation models can produce bleed or artifacts, especially on dense arrangements and guitar/piano material;
+- the hosting repository labels the checkpoint MIT, but that is not a sufficient chain-of-title statement for the weights. Production or commercial use requires independent rights clearance.
 
-Use a provider-neutral job interface:
+Alternatives researched remain useful: [`demucs-web`](https://github.com/timcsy/demucs-web)
+provides a four-source ONNX path with an approximately 172 MB model, and the
+official [ONNX Runtime Web documentation](https://onnxruntime.ai/docs/tutorials/web/)
+describes its WebGPU/WASM execution tradeoffs. A future Cloud HQ engine should
+still sit behind a provider-neutral job boundary with private temporary
+storage, progress, cancellation, explicit retention/deletion rules, and no
+provider secret in the browser.
 
-```ts
-type SeparationPreset = "vocals" | "guitar" | "bass" | "drums" | "custom";
+## Streaming-provider boundary
 
-interface SeparationJob {
-  id: string;
-  sourceId: string;
-  mode: "local-preview" | "cloud-hq";
-  preset: SeparationPreset;
-  requestedStems: string[];
-  status: "queued" | "loading-model" | "processing" | "ready" | "failed" | "cancelled";
-  progress: number;
-  outputs: Array<{ id: string; label: string; audioUrl: string }>;
-}
-```
+Spotify, Apple Music, TIDAL, and YouTube offer licensed catalog and playback
+surfaces, not general-purpose raw audio files that this static app may decode,
+separate, transpose, and re-export. Relevant official surfaces include the
+[Spotify Web Playback SDK](https://developer.spotify.com/documentation/web-playback-sdk),
+[MusicKit on the Web](https://developer.apple.com/musickit/), the
+[TIDAL Web SDK](https://developer.tidal.com/documentation/web-sdk), and the
+[YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference).
 
-Then support two engines behind the same contract:
-
-1. **Local preview**: opt-in model download, capability/memory check, visible size estimate, cache, cancel, and honest “fast/preview” quality label.
-2. **Cloud HQ**: short-lived upload URL, private object storage, queued worker, progress endpoint, expiring downloads, deletion policy, and no API secret in the browser.
-
-The UI should be non-destructive: source track → job/options/progress → grouped stem children. It should retain the model/version and requested taxonomy, allow retry, and never discard the original.
+The shipped UI therefore performs catalog searches/deep links only. It does
+not connect accounts, record a provider player, scrape media URLs, bypass DRM,
+or represent protected streams as imported audio. Full analysis, separation,
+transposition, and mix export require a local file the user is entitled to
+process. A future provider integration may add authorized in-provider playback
+or metadata, but that must remain visibly distinct from raw-audio import.
 
 ## Generation implementation decision
 
@@ -244,18 +260,33 @@ The repository now has a functional first slice of the practice-studio direction
 
 - real normalized waveform extraction in the existing analysis worker;
 - a horizontally scrollable, duration-accurate timeline with ruler, waveform, chord blocks, playhead, confidence treatment, loop overlay, pointer seek, and keyboard seek;
-- editable chord corrections that immediately update the timeline, piano, and capo-relative display;
+- editable chord corrections that immediately update the timeline, playable piano/guitar/bass views, and capo-relative display;
+- tonic-relative scale-degree numbers and movable-do solfa shown without replacing the detected chord symbol;
+- an interactive Web Audio keyboard whose white and black keys remain playable while transport audio is running or paused;
 - playback speed from 0.5× to 1.5× with pitch preservation;
+- a song-key picker that transposes chord symbols, harmonic-function labels, live audio, and the exported mix as one session operation;
 - A/B loop points and automatic loop playback;
-- a beat-grid metronome with half-time, beat, and subdivision densities;
+- a beat-grid metronome with half-time, beat, and subdivision densities plus a 0–150% click-level control;
 - capo-relative chord symbols while preserving the detected concert chord internally;
 - a local stem mixer that imports multiple matching files, infers common stem names, links play/pause/seek/rate, actively corrects drift, and supports volume/mute/multi-solo/removal;
+- six-source local WebGPU separation with pinned/integrity-checked model download, IndexedDB caching, progress, cancellation, memory guard, and aligned stem creation;
+- stem-aware analysis on the original, guitar, keys, other, and bass sources while preserving the master beat grid; bass is intentionally root-only, while drums and isolated vocals remain mix/export sources rather than pretending they contain full chords;
+- offline rendering of the audible mute/solo/volume state to WAV or 256 kbps MP3, including the active key transposition;
 - duration mismatch/load warnings and automatic original-mix muting when stems are first imported;
+- catalog search links for Spotify, Apple Music, TIDAL, and YouTube with an explicit no-stream-extraction boundary;
 - musician-friendly keyboard shortcuts: Space, Left/Right, L, and M;
 - stale-analysis protection so cancelling or opening another song cannot let an older asynchronous result overwrite the new session;
-- a responsive dark session layout with semantic contrast, visible focus, reduced-motion handling, and large primary targets.
+- a responsive dark session layout with a vertically centered keyboard, previous/current/next progression context, semantic contrast, visible focus, reduced-motion handling, and large primary targets.
 
-Current limitation: imported stems must already be time-aligned exports, and the independent media elements are transport-linked rather than sample-accurate. Automatic separation, pitch shifting, section detection, persistence, audio export, and generation are not represented as working controls yet. In final verification, `npm run type-check` and `npm run build` passed; both evaluation commands completed at approximately 99% on the standard mix and 98% on the hard mix. The synthetic noise is currently unseeded, so the exact score varies slightly between runs. The evaluation harness reports accuracy rather than enforcing a pass threshold, and the repository does not yet have an automated browser regression suite.
+Current limitations: imported stems must already be aligned to the source, and
+the independent media elements are actively synchronized rather than driven by
+a sample-accurate multitrack timeline. Live key shifting depends on the
+SoundTouch AudioWorklet and falls back to native playback if that audio graph
+cannot initialize. Automatic separation has no CPU/mobile fallback, carries
+the model-rights warning above, and still needs broader device and musical-
+quality benchmarking. Section detection, persistence, chart/session export,
+recording, generation, and browser-level integration coverage remain future
+work; the core theory, bass-root, WAV, and memory-budget paths have unit tests.
 
 ## Build order
 
@@ -263,19 +294,19 @@ Current limitation: imported stems must already be time-aligned exports, and the
 
 - Persist corrected chords, capo, speed, loops, mixer levels, and imported-stem metadata in IndexedDB.
 - Add editable beat anchors and time signature so the Smart Metronome can be corrected.
-- Add guitar fretboard, bass fretboard, Nashville/Roman notation, and easy/standard/extended chord modes.
+- Add Roman-notation and easy/standard/extended chord modes to the shipped piano/guitar/bass views.
 - Add named sections and section loops.
 - Add session JSON and printable chord-chart export.
-- Add browser-level unit/integration tests for playback, looping, corrections, and mixer synchronization.
+- Add browser-level unit/integration tests for playback, looping, corrections, key shifting, mixer synchronization, and export.
 
-### Release 2 — separation and performance feedback
+### Release 2 — harden separation and performance feedback
 
-- Implement the provider-neutral separation job model and one HQ backend.
-- Add quick instrument-oriented presets, Advanced taxonomy, progress/cancel/retry, and grouped stem outputs.
-- Run a measured local WebGPU/WASM experiment; ship only on devices that pass capability and memory checks.
+- Benchmark the local six-source beta across supported GPUs, song lengths, and instrument-heavy evaluation material.
+- Add cache management, retry, quality labeling, device diagnostics, and a CPU/server fallback decision.
+- Add quick instrument-oriented presets, a provider-neutral Advanced taxonomy, grouped output provenance, and one optional HQ backend.
 - Add count-in and simple microphone/instrument recording with take lanes.
 - Add practice history: tempo reached, loop repetitions, last position, and notes.
-- Export a custom mix and individual stems.
+- Add individual-stem/bundle export and optional pan controls.
 
 ### Release 3 — chord-aware creation
 
@@ -293,6 +324,8 @@ Current limitation: imported stems must already be time-aligned exports, and the
 - Keep provider API keys server-side.
 - Keep the original source and every user correction; AI operations are reversible children of them.
 - Surface model/version provenance and distinguish preview from high-quality processing.
+- Do not enable the current HTDemucs checkpoint in production or commercial distribution without independent model-rights clearance.
+- Keep streaming-service catalog/playback integrations separate from raw-audio import; do not record, scrape, or bypass protected playback.
 - Do not promise a fixed stem-category count; query the engine's supported capabilities.
 - Treat generated accompaniment as a new take with rights/provenance metadata.
 - Make detected BPM, chords, sections, and tuning correctable. They are hypotheses, not truth.

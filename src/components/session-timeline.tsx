@@ -2,7 +2,8 @@ import { useId, useMemo, useState, type KeyboardEvent, type PointerEvent } from 
 import { PencilIcon } from "lucide-react";
 
 import { cn } from "../cn";
-import type { ChordSegment } from "../types";
+import { getHarmonicFunction } from "../analysis/harmonic-function";
+import type { ChordAnalysisMode, ChordSegment } from "../types";
 
 const PX_PER_SECOND = 22;
 const MIN_TIMELINE_WIDTH = 720;
@@ -21,6 +22,8 @@ interface SessionTimelineProps {
   loopEnd: number | null;
   onSeek: (seconds: number) => void;
   onEditChord?: (index: number) => void;
+  keyTonic: string;
+  analysisMode: ChordAnalysisMode;
 }
 
 interface TimelineTick {
@@ -119,7 +122,10 @@ export function SessionTimeline({
   loopEnd,
   onSeek,
   onEditChord,
+  keyTonic,
+  analysisMode,
 }: SessionTimelineProps) {
+  const rootOnly = analysisMode === "bass-root";
   const gradientId = `session-waveform-${useId().replace(/:/g, "")}`;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
@@ -210,7 +216,9 @@ export function SessionTimeline({
     >
       <div className="flex min-h-11 items-center justify-between gap-3 border-b border-separator px-3">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h2 className="text-mini-strong shrink-0 text-secondary">Timeline</h2>
+          <h2 className="text-mini-strong shrink-0 text-secondary">
+            {rootOnly ? "Detected roots" : "Timeline"}
+          </h2>
           <output
             aria-label={`Playhead at ${formatTime(clampedTime)} of ${formatTime(timelineDuration)}`}
             className="truncate font-mono text-mini text-tertiary tabular-nums"
@@ -219,7 +227,7 @@ export function SessionTimeline({
           </output>
         </div>
 
-        {onEditChord && editSegment && editIndex !== null ? (
+        {!rootOnly && onEditChord && editSegment && editIndex !== null ? (
           <button
             type="button"
             onClick={() => onEditChord(editIndex)}
@@ -322,10 +330,11 @@ export function SessionTimeline({
 
           <div
             role="list"
-            aria-label="Detected chords"
+            aria-label={rootOnly ? "Detected roots" : "Detected chords"}
             className="relative h-14 overflow-hidden bg-well"
           >
             {segments.map((segment, index) => {
+              const harmonicFunction = getHarmonicFunction(segment.symbol, keyTonic);
               const start = clamp(Number.isFinite(segment.startSec) ? segment.startSec : 0, 0, timelineDuration);
               const end = clamp(Number.isFinite(segment.endSec) ? segment.endSec : start, start, timelineDuration);
               if (end <= start) return null;
@@ -354,12 +363,12 @@ export function SessionTimeline({
                       onSeek(start);
                     }}
                     onDoubleClick={() => {
-                      if (onEditChord) onEditChord(index);
+                      if (!rootOnly && onEditChord) onEditChord(index);
                     }}
                     onFocus={() => setSelectedIndex(index)}
                     aria-current={active ? "true" : undefined}
-                    aria-label={`${segment.symbol}, ${formatTime(start)} to ${formatTime(end)}${segment.edited ? ", manually corrected" : ""}${onEditChord ? ". Double-click or use the edit chord button to edit" : ""}`}
-                    title={`${segment.symbol}  ${formatTime(start)} - ${formatTime(end)}${onEditChord ? "  Double-click to edit" : ""}`}
+                    aria-label={`${rootOnly ? "Detected root" : "Chord"} ${segment.symbol}, ${harmonicFunction.spokenLabel}, ${formatTime(start)} to ${formatTime(end)}${segment.edited ? ", manually corrected" : ""}${!rootOnly && onEditChord ? ". Double-click or use the edit chord button to edit" : ""}`}
+                    title={`${rootOnly ? "Root" : "Chord"} ${segment.symbol}  ${formatTime(start)} - ${formatTime(end)}${!rootOnly && onEditChord ? "  Double-click to edit" : ""}`}
                     className={cn(
                       "relative flex size-full min-w-0 flex-col items-start justify-center overflow-hidden rounded-[3px] px-2 text-left transition-[background-color,color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
                       active
@@ -375,11 +384,10 @@ export function SessionTimeline({
                     >
                       {segment.symbol}
                     </span>
-                    {!compact ? (
-                      <span className={cn("font-mono text-[9px] leading-3 tabular-nums", active ? "text-accent/80" : "text-tertiary")}>
-                        {segment.edited ? "Edited" : formatTime(start)}
-                      </span>
-                    ) : null}
+                    <span className={cn("block max-w-full truncate text-[9px] font-semibold leading-3", active ? "text-accent/80" : "text-tertiary")}>
+                      {harmonicFunction.shortLabel}
+                      {!compact && segment.edited ? " · Edited" : ""}
+                    </span>
                   </button>
                 </div>
               );
