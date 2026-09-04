@@ -4,6 +4,7 @@
 import { Chord, Note } from "tonal";
 
 import { NO_CHORD } from "./classify-chords";
+import { PITCH_CLASS_NAMES } from "./chord-vocabulary";
 
 export interface ChordNote {
   name: string; // display name, e.g. "Bb"
@@ -32,4 +33,19 @@ export function getChordNotes(symbol: string): ChordNotes {
   }
   const rootPc = chord.tonic ? (Note.chroma(chord.tonic) ?? null) : null;
   return { notes, pitchClasses: notes.map((n) => n.pc), rootPc };
+}
+
+/** Transpose the root of one of our generated chord symbols by semitones. */
+export function transposeChordSymbol(symbol: string, semitones: number): string {
+  if (!symbol || symbol === NO_CHORD) return symbol;
+  const match = /^([A-G](?:#|b)?)([^/]*)(?:\/([A-G](?:#|b)?))?$/.exec(symbol);
+  if (!match) return symbol;
+  const transposePitch = (pitch: string): string => {
+    const pitchClass = Note.chroma(pitch);
+    if (typeof pitchClass !== "number") return pitch;
+    const nextPc = (pitchClass + (semitones % 12) + 12) % 12;
+    return PITCH_CLASS_NAMES[nextPc];
+  };
+  const bass = match[3] ? `/${transposePitch(match[3])}` : "";
+  return `${transposePitch(match[1])}${match[2]}${bass}`;
 }

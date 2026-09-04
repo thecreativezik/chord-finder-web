@@ -56,6 +56,7 @@ export function useAnalysis(): UseAnalysis {
   const [status, setStatus] = useState<AnalysisStatus>({ state: "idle" });
   const workerRef = useRef<Worker | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const cleanupWorker = useCallback(() => {
     workerRef.current?.terminate();
@@ -70,6 +71,7 @@ export function useAnalysis(): UseAnalysis {
   }, []);
 
   const reset = useCallback(() => {
+    requestIdRef.current += 1;
     cleanupWorker();
     revokeUrl();
     setStatus({ state: "idle" });
@@ -77,6 +79,7 @@ export function useAnalysis(): UseAnalysis {
 
   useEffect(() => {
     return () => {
+      requestIdRef.current += 1;
       cleanupWorker();
       revokeUrl();
     };
@@ -84,6 +87,8 @@ export function useAnalysis(): UseAnalysis {
 
   const analyzeFile = useCallback(
     async (file: File) => {
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
       cleanupWorker();
       revokeUrl();
 
@@ -96,6 +101,7 @@ export function useAnalysis(): UseAnalysis {
       try {
         decoded = await decodeToMono(await file.arrayBuffer());
       } catch (error) {
+        if (requestId !== requestIdRef.current) return;
         console.error("[chord-finder] Failed to decode audio:", error);
         revokeUrl();
         setStatus({
@@ -105,12 +111,20 @@ export function useAnalysis(): UseAnalysis {
         return;
       }
 
+      // Decoding cannot be aborted reliably across browsers. Ignore a stale
+      // completion if the user reset the app or chose another file meanwhile.
+      if (requestId !== requestIdRef.current) return;
+
       const worker = new Worker(new URL("./analysis.worker.ts", import.meta.url), {
         type: "module",
       });
       workerRef.current = worker;
 
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        if (requestId !== requestIdRef.current) {
+          worker.terminate();
+          return;
+        }
         const message = event.data;
         if (message.type === "progress") {
           setStatus({
@@ -129,6 +143,7 @@ export function useAnalysis(): UseAnalysis {
       };
 
       worker.onerror = (event) => {
+        if (requestId !== requestIdRef.current) return;
         setStatus({ state: "error", message: event.message || "Analysis failed." });
         cleanupWorker();
       };

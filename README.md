@@ -1,15 +1,27 @@
 # Chord Finder (Web)
 
 Detect the **key, tempo, and full chord progression** of any song — entirely in
-your browser. Drop in an audio file and read the chords on a chart-style piano
-keyboard that follows playback. Nothing is uploaded; all analysis runs
-client-side on WebAssembly.
+your browser. Drop in an audio file and practice against a waveform, editable
+chord lane, and chart-style piano keyboard that follows playback. Nothing is
+uploaded; all analysis runs client-side on WebAssembly.
 
 This is the web port of the Chord Finder macOS app. The analysis engine —
 essentia.js feature extraction, tuning estimation, spectral whitening, and a
-Viterbi chord decoder over a 190-chord template bank — is shared **verbatim**
-with the macOS app and verified by the same benchmark (99% clean / ~96.5%
-hard-mix accuracy; run `npm run eval`).
+Viterbi chord decoder over a 192-chord template bank — is shared **verbatim**
+with the macOS app and measured by the same benchmark (about 99% clean and
+97–98% hard-mix accuracy in recent runs; run `npm run eval`).
+
+## Practice workspace
+
+- Duration-accurate waveform and chord timeline with seeking and editable chord corrections
+- Pitch-preserving playback speed, A/B looping, and a beat-aware metronome
+- Capo-relative chord symbols while retaining concert-pitch chords
+- Local multi-stem import with linked play/pause/seek/rate, active drift correction, volume, mute, and multi-solo
+- Piano voicing, confidence, key, tempo, and keyboard shortcuts for rehearsal
+
+The source-backed [Moises product teardown and roadmap](./report-source.md)
+documents the larger direction, including automatic stem separation,
+section-aware stem generation, recording, sections, exports, and collaboration.
 
 ## Stack
 

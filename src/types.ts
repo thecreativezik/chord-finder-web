@@ -11,6 +11,7 @@ export interface ChordSegment {
   startSec: number;
   endSec: number;
   confidence: number; // 0..1 (cosine match score)
+  edited?: boolean; // true when a musician has replaced the detected symbol
 }
 
 export interface AnalysisResult {
@@ -19,6 +20,7 @@ export interface AnalysisResult {
   bpm: number;
   key: KeyResult;
   beats: number[]; // beat onset times in seconds
+  waveform: number[]; // normalized peak envelope for the session timeline
   segments: ChordSegment[];
 }
 

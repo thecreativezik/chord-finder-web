@@ -82,9 +82,18 @@ function NoteDot({ note }: { note: PlacedNote }) {
 
 export function Piano2D({ notes, rootPc, className }: Piano2DProps) {
   const placed = placeNotes(notes, rootPc);
+  const noteNames = notes.map((note) => note.name.replace("#", "sharp ").replace("b", "flat "));
+  const pianoLabel = noteNames.length
+    ? `Piano diagram. Root ${noteNames[0]}. Chord notes ${noteNames.join(", ")}.`
+    : "Piano diagram. No chord notes at the playhead.";
 
   return (
-    <div className={cn("flex w-full flex-col items-center gap-3", className)}>
+    <div
+      data-piano
+      role="img"
+      aria-label={pianoLabel}
+      className={cn("flex w-full flex-col items-center gap-3", className)}
+    >
       <div className="relative aspect-[7/2] w-full max-w-4xl select-none">
         {/* White keys */}
         {Array.from({ length: WHITE_COUNT }, (_, i) => (

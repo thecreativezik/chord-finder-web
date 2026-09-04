@@ -12,6 +12,8 @@ import type { AnalysisResult, AnalyzeRequest, WorkerResponse } from "../types";
 
 let essentia: Essentia | null = null;
 
+const WAVEFORM_BUCKETS = 720;
+
 function post(message: WorkerResponse): void {
   self.postMessage(message);
 }
@@ -24,6 +26,30 @@ function tryDelete(vector: { delete?: () => void } | undefined): void {
   }
 }
 
+/** Build a compact, normalized peak envelope for the editor timeline. */
+function buildWaveform(channelData: Float32Array): number[] {
+  const bucketCount = Math.min(WAVEFORM_BUCKETS, Math.max(1, channelData.length));
+  const waveform = new Array<number>(bucketCount);
+  let globalPeak = 0;
+
+  for (let bucket = 0; bucket < bucketCount; bucket++) {
+    const start = Math.floor((bucket * channelData.length) / bucketCount);
+    const end = Math.max(start + 1, Math.floor(((bucket + 1) * channelData.length) / bucketCount));
+    let peak = 0;
+    for (let i = start; i < end; i++) peak = Math.max(peak, Math.abs(channelData[i]));
+    waveform[bucket] = peak;
+    globalPeak = Math.max(globalPeak, peak);
+  }
+
+  if (globalPeak > 0) {
+    for (let i = 0; i < waveform.length; i++) {
+      // A gentle curve keeps quieter phrases legible without flattening dynamics.
+      waveform[i] = Math.sqrt(waveform[i] / globalPeak);
+    }
+  }
+  return waveform;
+}
+
 function analyze(
   essentiaInstance: Essentia,
   channelData: Float32Array,
@@ -33,6 +59,7 @@ function analyze(
   post({ type: "progress", stage: "extracting", progress: 0.02 });
 
   const audioVector = essentiaInstance.arrayToVector(channelData);
+  const waveform = buildWaveform(channelData);
 
   // Musical key.
   const keyOut = essentiaInstance.KeyExtractor(audioVector);
@@ -70,6 +97,7 @@ function analyze(
     bpm: Math.round(bpm * 10) / 10,
     key: { tonic: keyOut.key, scale: keyOut.scale, strength: keyOut.strength },
     beats,
+    waveform,
     segments,
   };
 }
