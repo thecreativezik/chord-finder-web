@@ -23,6 +23,11 @@ import {
 import { getHarmonicFunction } from "./analysis/harmonic-function";
 import { transposeChordSymbol } from "./analysis/chord-notes";
 import { NO_CHORD } from "./analysis/classify-chords";
+import {
+  describeProvenance,
+  isRootOnly,
+  ORIGINAL_MIX_SOURCE,
+} from "./analysis/provenance";
 import { analyzeChordBlob, useAnalysis } from "./analysis/use-analysis";
 import { renderAndDownloadMix, type ExportFormat } from "./audio/export-mix";
 import { ChordWorkbench } from "./components/chord-workbench";
@@ -43,6 +48,7 @@ import type {
   AnalysisStage,
   ChordAnalysisMode,
   ChordSegment,
+  DerivedChords,
   SectionSegment,
   TimeSignature,
 } from "./types";
@@ -180,7 +186,10 @@ function TimeSignaturePicker({
 export function App() {
   const { status, analyzeFile, reset } = useAnalysis();
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
-  const [segmentSets, setSegmentSets] = useState<Record<string, ChordSegment[]>>({});
+  // Keyed by track id, and holding the decoder record alongside the segments.
+  // The two chord decoders produce incompatible output and which one ran is
+  // not recoverable from the segments, so it travels with them.
+  const [segmentSets, setSegmentSets] = useState<Record<string, DerivedChords>>({});
   const [chordSourceId, setChordSourceId] = useState(ORIGINAL_MIX_TRACK_ID);
   const [chordSourceStatus, setChordSourceStatus] = useState<ChordSourceStatus>({ state: "idle" });
   const [capo, setCapo] = useState(0);
@@ -275,7 +284,9 @@ export function App() {
       setSegmentSets({});
       return;
     }
-    setSegmentSets({ [ORIGINAL_MIX_TRACK_ID]: result.segments });
+    setSegmentSets({
+      [ORIGINAL_MIX_TRACK_ID]: { segments: result.segments, provenance: result.provenance },
+    });
     setChordSourceId(ORIGINAL_MIX_TRACK_ID);
     setChordSourceStatus({ state: "idle" });
     setTransposeSemitones(0);
@@ -335,6 +346,17 @@ export function App() {
     };
   }, [mobileMixerOpen]);
 
+  // Removing a stem leaves its chord set unreachable; drop it rather than hold
+  // a decoded array for a track that no longer exists. Re-adding the file gets
+  // a fresh track id and is re-analyzed either way.
+  useEffect(() => {
+    const liveIds = new Set(stemMixer.tracks.map((track) => track.id));
+    setSegmentSets((current) => {
+      const kept = Object.entries(current).filter(([id]) => liveIds.has(id));
+      return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept);
+    });
+  }, [stemMixer.tracks]);
+
   useEffect(() => {
     if (stemMixer.tracks.some((track) => track.id === chordSourceId)) return;
     chordAbortRef.current?.abort();
@@ -342,7 +364,8 @@ export function App() {
     setChordSourceStatus({ state: "idle" });
   }, [chordSourceId, stemMixer.tracks]);
 
-  const baseSegments = segmentSets[chordSourceId] ?? [];
+  const activeChords = segmentSets[chordSourceId] ?? null;
+  const baseSegments = activeChords?.segments ?? [];
   const originalKeyPc = result ? Note.chroma(result.key.tonic) ?? 0 : 0;
   const selectedKeyPc = (originalKeyPc + transposeSemitones + 12) % 12;
   const selectedKeyLabel = KEY_NAMES[selectedKeyPc];
@@ -373,19 +396,35 @@ export function App() {
     [baseSegments, preferFlats, transposeSemitones],
   );
   const sourceTrack = stemMixer.tracks.find((track) => track.id === chordSourceId);
-  const sourceLabel = sourceTrack?.name ?? "Original mix";
-  const sourceAnalysisMode: ChordAnalysisMode = sourceTrack?.kind === "bass" ? "bass-root" : "harmony";
-  const rootOnlySource = sourceAnalysisMode === "bass-root";
+  // Live name when the track is still in the mixer, so a rename is reflected;
+  // the recorded name once it is gone, so the label never claims output came
+  // from somewhere it did not.
+  const sourceLabel = sourceTrack?.name ?? activeChords?.provenance.source ?? ORIGINAL_MIX_SOURCE;
+  // Decoder identity comes only from the artifact. Deriving it from
+  // `sourceTrack` left one render — between a stem's removal and the source
+  // guard above — where root-only output was offered as editable chords.
+  const rootOnlySource = isRootOnly(activeChords?.provenance);
+  const sourceAnalysisMode: ChordAnalysisMode = rootOnlySource ? "bass-root" : "harmony";
+  const sourceAttribution = activeChords ? describeProvenance(activeChords.provenance) : undefined;
 
   const updateChord = useCallback((symbol: string, target: ChordSegment) => {
     const storedSymbol = transposeChordSymbol(symbol, -transposeSemitones, originalPreferFlats);
-    setSegmentSets((current) => ({
-      ...current,
-      [chordSourceId]: (current[chordSourceId] ?? []).map((segment) =>
-        segment.startSec === target.startSec && segment.endSec === target.endSec
-          ? { ...segment, symbol: storedSymbol, edited: true }
-          : segment),
-    }));
+    setSegmentSets((current) => {
+      const existing = current[chordSourceId];
+      if (!existing) return current;
+      return {
+        ...current,
+        // An edit changes the symbol, not what decoded it: provenance is kept
+        // verbatim so `edited` stays the only marker of the musician's hand.
+        [chordSourceId]: {
+          ...existing,
+          segments: existing.segments.map((segment) =>
+            segment.startSec === target.startSec && segment.endSec === target.endSec
+              ? { ...segment, symbol: storedSymbol, edited: true }
+              : segment),
+        },
+      };
+    });
   }, [chordSourceId, originalPreferFlats, transposeSemitones]);
 
   const renameSection = useCallback((index: number, label: string) => {
@@ -433,15 +472,15 @@ export function App() {
     chordAbortRef.current = abort;
     setChordSourceStatus({ state: "loading", trackId, progress: 0 });
     try {
-      const segments = await analyzeChordBlob(
-        asset.blob,
-        result.beats,
-        (progress) => setChordSourceStatus({ state: "loading", trackId, progress }),
-        abort.signal,
-        asset.track.kind === "bass" ? "bass-root" : "harmony",
-      );
+      const derived = await analyzeChordBlob(asset.blob, {
+        beats: result.beats,
+        source: asset.track.name,
+        analysisMode: asset.track.kind === "bass" ? "bass-root" : "harmony",
+        onProgress: (progress) => setChordSourceStatus({ state: "loading", trackId, progress }),
+        signal: abort.signal,
+      });
       if (abort.signal.aborted) return;
-      setSegmentSets((current) => ({ ...current, [trackId]: segments }));
+      setSegmentSets((current) => ({ ...current, [trackId]: derived }));
       setChordSourceStatus({ state: "idle" });
     } catch (error) {
       if (abort.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
@@ -608,7 +647,7 @@ export function App() {
                 <div data-session-heading className="flex min-w-0 flex-1 items-center gap-2">
                   <div data-session-title className="min-w-0 flex-1">
                     <h2 className="truncate text-sm font-semibold" title={status.fileName}>{status.fileName}</h2>
-                    <p className="mt-0.5 text-mini text-tertiary tabular-nums">
+                    <p className="mt-0.5 text-mini text-tertiary tabular-nums" title={sourceAttribution}>
                       {formatTime(result.durationSec)} · {baseSegments.length} {rootOnlySource ? "root regions · roots" : "chord regions · chords"} from {sourceLabel}
                       {sections.length > 0
                         ? ` · ${sections.length} sections`

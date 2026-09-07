@@ -15,6 +15,36 @@ export interface ChordSegment {
 }
 
 /**
+ * What produced a derived artifact.
+ *
+ * Narrow on purpose — see `analysis/provenance.ts`. The load-bearing field is
+ * `params.decoder`: the app runs two different chord decoders and three
+ * user-visible behaviours depend on knowing which one produced the segments
+ * currently on screen.
+ */
+export interface Provenance {
+  module: "beats-and-chords" | "chords" | "stem-separation";
+  /** Where the artifact was derived from: "Original mix", or a stem's name. */
+  source: string;
+  /** Pinned engine identity, so a version or model bump is visible. */
+  engine: string;
+  /** Run parameters that change the output: decoder variant, tuning. */
+  params?: Readonly<Record<string, string | number>>;
+  startedAt: number; // epoch ms
+  durationMs: number;
+}
+
+/**
+ * A chord set together with the record of what decoded it. Stored as a pair so
+ * that no consumer has to re-derive the decoder from the current selection —
+ * the two disagree for a render after the source stem leaves the mixer.
+ */
+export interface DerivedChords {
+  segments: ChordSegment[];
+  provenance: Provenance;
+}
+
+/**
  * Metre in effect for the whole session. Detection is deliberately not
  * attempted — a wrong guess renumbers every bar on screen — so this is the
  * 4/4 default until the musician picks another metre.
@@ -62,6 +92,7 @@ export interface AnalysisResult {
   waveform: number[]; // normalized peak envelope for the session timeline
   segments: ChordSegment[];
   sections: SectionSegment[]; // arrangement lane; empty when the song is too short to read
+  provenance: Provenance; // what decoded this song's harmony and arrangement
 }
 
 export type AnalysisStage = "decoding" | "extracting" | "chords" | "done";
@@ -89,6 +120,8 @@ export interface FullAnalyzeRequest {
 export interface ChordAnalyzeRequest {
   mode: "chords";
   analysisMode: ChordAnalysisMode;
+  /** Track name recorded in the returned provenance. */
+  source: string;
   channelData: Float32Array;
   sampleRate: number;
   durationSec: number;
@@ -100,5 +133,5 @@ export type AnalyzeRequest = FullAnalyzeRequest | ChordAnalyzeRequest;
 export type WorkerResponse =
   | { type: "progress"; stage: AnalysisStage; progress: number }
   | { type: "result"; result: AnalysisResult }
-  | { type: "chord-result"; segments: ChordSegment[] }
+  | { type: "chord-result"; segments: ChordSegment[]; provenance: Provenance }
   | { type: "error"; message: string };

@@ -7,6 +7,7 @@ import {
   isSoundTouchNeutral,
   SOUND_TOUCH_STRETCH_PARAMETERS,
 } from "../audio/soundtouch-config";
+import type { Provenance } from "../types";
 
 export const ORIGINAL_MIX_TRACK_ID = "original-mix";
 export const STEM_FILE_ACCEPT =
@@ -32,6 +33,8 @@ export interface StemTrack {
   durationSec: number | null;
   durationMismatch: boolean;
   loadState: StemLoadState;
+  /** Present for separated stems; an imported file's history is the musician's. */
+  provenance?: Provenance;
 }
 
 export interface StemAssetInput {
@@ -39,6 +42,7 @@ export interface StemAssetInput {
   kind: Exclude<StemKind, "original">;
   blob: Blob;
   origin: Exclude<StemOrigin, "original">;
+  provenance?: Provenance;
 }
 
 export interface StemTrackAsset {
@@ -640,6 +644,7 @@ export function useStemMixer(
         durationSec,
         durationMismatch: hasDurationMismatch(masterDuration, durationSec),
         loadState: durationSec === null ? "loading" : "ready",
+        ...(asset.provenance ? { provenance: asset.provenance } : null),
       });
     }
 
