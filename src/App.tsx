@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AudioWaveformIcon,
   FolderOpenIcon,
@@ -146,21 +146,33 @@ function TimeSignaturePicker({
   value: TimeSignature;
   onChange: (signature: TimeSignature) => void;
 }) {
+  const hintId = `${useId().replace(/:/g, "")}-metre-hint`;
   return (
-    <label className="flex shrink-0 flex-col gap-0.5">
+    // The hint is associated with the select and shown on focus as well as
+    // hover: metre is *not* detected, and a title attribute never reaches a
+    // keyboard or touch user, who are the ones most likely to be surprised
+    // that every bar number on screen depends on this control.
+    <label className="group relative flex shrink-0 flex-col gap-0.5">
       <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-tertiary">Metre</span>
       <select
         value={formatTimeSignature(value)}
         onChange={(event) => onChange(parseTimeSignature(event.target.value))}
         className="-ml-1 rounded bg-transparent px-1 text-sm font-semibold text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent"
         aria-label="Time signature"
-        title="Bar numbers and the click accent follow this metre. It is not detected."
+        aria-describedby={hintId}
       >
         {TIME_SIGNATURES.map((signature) => {
           const label = formatTimeSignature(signature);
           return <option key={label} value={label}>{label}</option>;
         })}
       </select>
+      <span
+        id={hintId}
+        role="note"
+        className="pointer-events-none absolute left-0 top-full z-30 mt-1 hidden w-56 rounded-md border border-separator bg-control px-2 py-1.5 text-mini text-secondary shadow-lg group-focus-within:block group-hover:block"
+      >
+        Defaults to 4/4 and is your choice, not detected. Bar numbers and the click accent follow it.
+      </span>
     </label>
   );
 }
@@ -598,7 +610,9 @@ export function App() {
                     <h2 className="truncate text-sm font-semibold" title={status.fileName}>{status.fileName}</h2>
                     <p className="mt-0.5 text-mini text-tertiary tabular-nums">
                       {formatTime(result.durationSec)} · {baseSegments.length} {rootOnlySource ? "root regions · roots" : "chord regions · chords"} from {sourceLabel}
-                      {sections.length > 0 ? ` · ${sections.length} sections` : ""}
+                      {sections.length > 0
+                        ? ` · ${sections.length} sections`
+                        : " · no distinct sections detected"}
                     </p>
                   </div>
                   <button
@@ -618,16 +632,19 @@ export function App() {
                     accent
                   />
                   <Stat label="Number · solfa" value={harmonicFunction.shortLabel} />
+                  {/* Row 1 is what changes as the song plays; row 2 is session
+                      controls. Grouping them this way is also what makes it
+                      clear that the confidence belongs to the chord. */}
+                  <Stat label="Chord confidence" value={activeBaseSegment ? activeBaseSegment.edited ? "Edited" : `${Math.round(activeBaseSegment.confidence * 100)}%` : "—"} />
                   <KeyPicker tonic={selectedKeyTonic} scale={result.key.scale} semitones={transposeSemitones} onChange={changeSongKey} />
                   <Stat label="Tempo" value={`${result.bpm} BPM`} />
                   <TimeSignaturePicker value={timeSignature} onChange={setTimeSignature} />
-                  <Stat label="Confidence" value={activeBaseSegment ? activeBaseSegment.edited ? "Edited" : `${Math.round(activeBaseSegment.confidence * 100)}%` : "—"} />
                 </div>
               </div>
 
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
                 <div className="shrink-0 p-3 sm:p-4">
-                  <SessionTimeline waveform={result.waveform} segments={displaySegments} duration={result.durationSec} currentTime={playback.currentTime} activeIndex={activeIndex} loopStart={playback.loopStart} loopEnd={playback.loopEnd} onSeek={playback.seek} onEditChord={rootOnlySource ? undefined : requestChordEdit} keyTonic={selectedKeyTonic} analysisMode={sourceAnalysisMode} sections={sections} activeSectionIndex={activeSectionIndex} beatMap={beatMap} onLoopSection={loopSection} onRenameSection={renameSection} />
+                  <SessionTimeline waveform={result.waveform} segments={displaySegments} duration={result.durationSec} currentTime={playback.currentTime} activeIndex={activeIndex} loopStart={playback.loopStart} loopEnd={playback.loopEnd} onSeek={playback.seek} onEditChord={rootOnlySource ? undefined : requestChordEdit} keyTonic={selectedKeyTonic} analysisMode={sourceAnalysisMode} sections={sections} activeSectionIndex={activeSectionIndex} beatMap={beatMap} onLoopSection={loopSection} onRenameSection={renameSection} analysisKey={`${sourceKey}:${chordSourceId}`} />
                 </div>
                 <ChordWorkbench
                   key={`${sourceKey}:${chordSourceId}`}

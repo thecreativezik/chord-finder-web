@@ -56,15 +56,48 @@ describe("SessionTimeline arrangement lane", () => {
   it("renders the lane, its labels and the bar ruler", () => {
     const html = render();
     expect(html).toContain('aria-label="Arrangement sections"');
-    expect(html).toContain("Section A, from bar 1, 0:00 to 0:16");
-    expect(html).toContain("Section Chorus, from bar 9, 0:16 to 0:32");
-    // Renamed sections drop the detector's confidence readout; detected ones keep it.
-    expect(html).toContain("82%");
-    expect(html).not.toContain("94%");
+    expect(html).toContain("Section A, from bar 1, 0:00 to 0:16. Seeks to its start");
+    expect(html).toContain("Section Chorus, from bar 9, 0:16 to 0:32, renamed. Seeks to its start");
   });
 
-  it("offers a loop control for the section under the playhead", () => {
-    expect(render()).toContain('aria-label="Loop section Chorus"');
+  it("places arrangement above the waveform, below the rulers", () => {
+    // Arrangement describes the larger structure, so it reads as a header band
+    // over the audio rather than as a peer of the chord lane beneath it.
+    const html = render();
+    const barRuler = html.indexOf("data-bar-ruler");
+    const band = html.indexOf('aria-label="Arrangement sections"');
+    const waveform = html.indexOf('aria-label="Waveform seek control"');
+    const chords = html.indexOf('aria-label="Detected chords"');
+    expect(barRuler).toBeGreaterThan(-1);
+    expect(barRuler).toBeLessThan(band);
+    expect(band).toBeLessThan(waveform);
+    expect(waveform).toBeLessThan(chords);
+  });
+
+  it("labels the band outside the scrolling coordinate canvas", () => {
+    const html = render();
+    const label = html.indexOf(">Sections<");
+    const scrollLane = html.indexOf("data-scroll-lane");
+    expect(label).toBeGreaterThan(-1);
+    expect(label).toBeLessThan(scrollLane);
+  });
+
+  it("reports no confidence percentage in the lane", () => {
+    // The stored value is normalized boundary novelty, not a probability that
+    // the section or its name is correct, and the first region scores off its
+    // closing boundary. It stays in the data and off the screen.
+    expect(render()).not.toMatch(/>\s*\d+(\.\d+)?%\s*</);
+  });
+
+  it("offers per-region actions rather than a hidden double-click", () => {
+    const html = render();
+    expect(html).toContain('aria-label="Section A actions"');
+    expect(html).toContain('aria-label="Section Chorus actions"');
+    expect(html).not.toContain("Double-click to rename");
+  });
+
+  it("names the looping section when the loop coincides with one", () => {
+    expect(render()).toContain("Looping Chorus");
   });
 
   it("shows the playhead's bar and beat next to the clock", () => {
@@ -78,10 +111,11 @@ describe("SessionTimeline arrangement lane", () => {
     expect(html).not.toContain("NaN");
   });
 
-  it("omits the lane and the loop control entirely when nothing was detected", () => {
+  it("omits the lane, its label and its actions when nothing was detected", () => {
     const html = render({ sections: [], activeSectionIndex: -1 });
     expect(html).not.toContain('aria-label="Arrangement sections"');
-    expect(html).not.toContain("Loop section");
+    expect(html).not.toContain(">Sections<");
+    expect(html).not.toContain("actions");
     // The chord lane and the bar ruler are unaffected.
     expect(html).toContain('aria-label="Detected chords"');
     expect(html).toContain("bar 10.1");
@@ -96,7 +130,7 @@ describe("SessionTimeline arrangement lane", () => {
   it("still renders the lane for a root-only bass source", () => {
     const html = render({ analysisMode: "bass-root", onEditChord: undefined });
     expect(html).toContain('aria-label="Arrangement sections"');
-    expect(html).toContain('aria-label="Loop section Chorus"');
+    expect(html).toContain('aria-label="Section Chorus actions"');
     expect(html).toContain("Detected roots");
   });
 });
