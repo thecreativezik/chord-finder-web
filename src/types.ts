@@ -68,6 +68,22 @@ export interface BeatMarker {
 }
 
 /**
+ * One stretch of roughly constant tempo, derived from the beat spacing.
+ *
+ * Always derived from `AnalysisResult.beats` via `detectTempoRegions`, never
+ * stored — and `bpm` is left alone rather than redefined, because the eval
+ * pipeline and the macOS app both read it.
+ */
+export interface TempoRegion {
+  bpm: number;
+  startSec: number;
+  endSec: number;
+  /** Index range into the normalized beat array, end exclusive. */
+  startBeat: number;
+  endBeat: number;
+}
+
+/**
  * One arrangement region — the repeat structure of the song rather than its
  * harmony. Labels are letters ("A", "B", "A2") because that is what a
  * self-similarity read actually supports; naming a region "Chorus" needs a
