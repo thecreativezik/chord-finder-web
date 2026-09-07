@@ -230,9 +230,14 @@ input[type="text"]::placeholder {
     min-height: 2.5rem;
   }
 
-  /* 36px reads correctly with a mouse; a finger needs 44px. */
+  /* 36px reads correctly with a mouse; a finger needs 44px. The trigger takes
+     its height from the band, so only the width has to be stated. */
   [data-section-band] {
     height: 2.75rem;
+  }
+
+  [data-section-actions] {
+    width: 2.75rem;
   }
 
   [data-session-stats] select {

@@ -118,6 +118,7 @@ beforeEach(() => {
           onLoopSection={onLoopSection}
           onRenameSection={onRenameSection}
           analysisKey="song-1"
+          metreKey="4/4"
           {...overrides}
         />,
       );
@@ -280,6 +281,40 @@ describe("invalidation", () => {
     elsewhere.remove();
   });
 
+  it("closes on a metre change whose section bounds do not move", () => {
+    click(byLabel("Section B actions"));
+    click(byLabel("Rename section B"));
+    type(query("input") as HTMLInputElement, "Unsaved");
+
+    const picker = document.createElement("button");
+    document.body.append(picker);
+    picker.focus();
+
+    // 4/4 -> 2/4 renumbers every bar, but 32s and 64s are downbeats in both,
+    // so `snapSections` returns the identical bounds. Only the metre signal
+    // catches this.
+    harness.render({ metreKey: "2/4" });
+
+    expect(harness.container.querySelector('[role="group"]')).toBeNull();
+    expect(harness.onRenameSection).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(picker);
+    expect(query('[role="status"]').textContent)
+      .toBe("Sections changed. The rename was cancelled.");
+    picker.remove();
+  });
+
+  it("announces a closed panel differently when no draft was pending", () => {
+    click(byLabel("Section B actions"));
+    harness.render({ metreKey: "3/4" });
+    expect(query('[role="status"]').textContent)
+      .toBe("Sections changed. Section actions closed.");
+  });
+
+  it("says nothing when the metre changes with no panel open", () => {
+    harness.render({ metreKey: "5/4" });
+    expect(query('[role="status"]').textContent).toBe("");
+  });
+
   it("keeps the panel open for a label-only rename", () => {
     click(byLabel("Section B actions"));
     harness.render({
@@ -293,6 +328,28 @@ describe("invalidation", () => {
     click(byLabel("Section B actions"));
     harness.render({ analysisKey: "song-2" });
     expect(harness.container.querySelector('[role="group"]')).toBeNull();
+  });
+});
+
+describe("action trigger visibility", () => {
+  it("pins the trigger beside the sticky label, not at the region's far edge", () => {
+    // At 360px with the lane unscrolled, a 32-second region put its trigger
+    // roughly 340px beyond the viewport, hiding Loop and Rename behind a
+    // horizontal scroll nobody would discover.
+    const pinned = harness.container.querySelectorAll("[data-section-pinned]");
+    expect(pinned).toHaveLength(3);
+    for (const group of pinned) {
+      expect(group.querySelector("[data-section-actions]")).not.toBeNull();
+    }
+  });
+
+  it("keeps seek and actions as separate controls", () => {
+    // The seek target still fills the region, so a click anywhere in it seeks,
+    // but it is a sibling of the trigger rather than its parent.
+    const trigger = byLabel("Section B actions");
+    expect(trigger.closest("button")).toBe(trigger);
+    click(byLabel("Section B, from bar 17, 0:32 to 1:04. Seeks to its start"));
+    expect(harness.onSeek).toHaveBeenCalledWith(32);
   });
 });
 

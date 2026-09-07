@@ -644,7 +644,7 @@ export function App() {
 
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
                 <div className="shrink-0 p-3 sm:p-4">
-                  <SessionTimeline waveform={result.waveform} segments={displaySegments} duration={result.durationSec} currentTime={playback.currentTime} activeIndex={activeIndex} loopStart={playback.loopStart} loopEnd={playback.loopEnd} onSeek={playback.seek} onEditChord={rootOnlySource ? undefined : requestChordEdit} keyTonic={selectedKeyTonic} analysisMode={sourceAnalysisMode} sections={sections} activeSectionIndex={activeSectionIndex} beatMap={beatMap} onLoopSection={loopSection} onRenameSection={renameSection} analysisKey={`${sourceKey}:${chordSourceId}`} />
+                  <SessionTimeline waveform={result.waveform} segments={displaySegments} duration={result.durationSec} currentTime={playback.currentTime} activeIndex={activeIndex} loopStart={playback.loopStart} loopEnd={playback.loopEnd} onSeek={playback.seek} onEditChord={rootOnlySource ? undefined : requestChordEdit} keyTonic={selectedKeyTonic} analysisMode={sourceAnalysisMode} sections={sections} activeSectionIndex={activeSectionIndex} beatMap={beatMap} onLoopSection={loopSection} onRenameSection={renameSection} analysisKey={`${sourceKey}:${chordSourceId}`} metreKey={formatTimeSignature(timeSignature)} />
                 </div>
                 <ChordWorkbench
                   key={`${sourceKey}:${chordSourceId}`}

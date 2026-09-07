@@ -58,6 +58,13 @@ interface SessionTimelineProps {
    * region belonging to different audio.
    */
   analysisKey?: string;
+  /**
+   * Changes when the musician picks a different metre. Needed as its own
+   * signal because a metre change renumbers every bar on screen while
+   * frequently leaving the section *bounds* untouched — 32s and 64s are
+   * downbeats in 4/4 and in 2/4 — so a bounds comparison misses it.
+   */
+  metreKey?: string;
 }
 
 interface SectionBounds {
@@ -176,6 +183,7 @@ export function SessionTimeline({
   onLoopSection,
   onRenameSection,
   analysisKey,
+  metreKey,
 }: SessionTimelineProps) {
   const rootOnly = analysisMode === "bass-root";
   const gradientId = `session-waveform-${useId().replace(/:/g, "")}`;
@@ -281,6 +289,27 @@ export function SessionTimeline({
     }
     // Deliberately not focusTrigger(): the region it pointed at is gone.
   }, [actionTarget, isRenaming, sections]);
+
+  /**
+   * A metre change invalidates a pending action even when the bounds survive
+   * it: the region the musician chose is at bar 17 before the change and bar 33
+   * after, so an uncommitted draft is no longer addressed to what they picked.
+   * Focus stays on the picker they are standing on.
+   */
+  const seenMetreKey = useRef(metreKey);
+  useEffect(() => {
+    if (seenMetreKey.current === metreKey) return;
+    seenMetreKey.current = metreKey;
+    if (!actionTarget) return;
+    setActionTarget(null);
+    setRenameError(null);
+    if (isRenaming) {
+      setIsRenaming(false);
+      setInvalidationNotice("Sections changed. The rename was cancelled.");
+    } else {
+      setInvalidationNotice("Sections changed. Section actions closed.");
+    }
+  }, [actionTarget, isRenaming, metreKey]);
 
   // A replacement song or chord source invalidates a pending action outright,
   // even in the unlikely case that a region with identical bounds exists in it.
@@ -552,51 +581,65 @@ export function SessionTimeline({
                   <div
                     key={`section-${key}-${index}`}
                     role="listitem"
-                    className="absolute inset-y-0 flex items-stretch gap-px px-px"
+                    className="absolute inset-y-0 flex items-stretch px-px"
                     style={{ left: `${(start / timelineDuration) * 100}%`, width: `${widthPercent}%` }}
                   >
+                    {/* Fills the whole region so a click anywhere in it seeks,
+                        and sits beneath the pinned label group. */}
                     <button
                       type="button"
                       onClick={() => onSeek(start)}
                       aria-current={active ? "true" : undefined}
                       aria-label={`Section ${section.label}${barRange}, ${formatTime(start)} to ${formatTime(end)}${section.edited ? ", renamed" : ""}. Seeks to its start`}
                       className={cn(
-                        "flex min-w-0 flex-1 items-center rounded-[3px] text-left transition-[background-color,color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
-                        active
-                          ? "bg-accent/15 text-accent"
-                          : "bg-control-subtle text-secondary hover:bg-control",
+                        "absolute inset-0 rounded-[3px] transition-[background-color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
+                        active ? "bg-accent/15" : "bg-control-subtle hover:bg-control",
                       )}
-                    >
-                      {/* Sticky within its own region, so a section that runs
-                          for a minute keeps its name on screen when its start
-                          has scrolled out of the lane. */}
-                      <span className="sticky left-0 max-w-full truncate px-2 text-small-strong">
-                        {section.label}
-                      </span>
-                    </button>
+                    />
 
-                    {onLoopSection || onRenameSection ? (
-                      <button
-                        type="button"
-                        ref={(node) => {
-                          if (node) sectionTriggerRefs.current.set(key, node);
-                          else sectionTriggerRefs.current.delete(key);
-                        }}
-                        onClick={() => openSectionActions(section)}
-                        aria-label={`Section ${section.label} actions`}
-                        aria-expanded={chosen}
-                        aria-controls={chosen ? panelId : undefined}
-                        title={`Section ${section.label} actions`}
+                    {/* The label and its actions trigger travel together,
+                        pinned to the lane edge but constrained to their own
+                        region. Previously the trigger sat at the region's right
+                        edge: a 32-second section at scrollLeft 0 put it ~340px
+                        beyond a 360px viewport, hiding both Loop and Rename
+                        until you discovered a horizontal scroll. */}
+                    <div
+                      data-section-pinned
+                      className="pointer-events-none sticky left-0 z-10 flex min-w-0 max-w-full items-center"
+                    >
+                      <span
                         className={cn(
-                          "flex w-6 shrink-0 items-center justify-center rounded-[3px] transition-[background-color,color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent [&_svg]:size-3.5",
-                          chosen
-                            ? "bg-accent/25 text-accent"
-                            : "bg-control-subtle text-tertiary hover:bg-control hover:text-primary",
+                          "truncate px-2 text-small-strong leading-4",
+                          active ? "text-accent" : "text-secondary",
                         )}
                       >
-                        <EllipsisIcon aria-hidden="true" />
-                      </button>
-                    ) : null}
+                        {section.label}
+                      </span>
+
+                      {onLoopSection || onRenameSection ? (
+                        <button
+                          data-section-actions
+                          type="button"
+                          ref={(node) => {
+                            if (node) sectionTriggerRefs.current.set(key, node);
+                            else sectionTriggerRefs.current.delete(key);
+                          }}
+                          onClick={() => openSectionActions(section)}
+                          aria-label={`Section ${section.label} actions`}
+                          aria-expanded={chosen}
+                          aria-controls={chosen ? panelId : undefined}
+                          title={`Section ${section.label} actions`}
+                          className={cn(
+                            "pointer-events-auto flex w-6 shrink-0 self-stretch items-center justify-center rounded-[3px] transition-[background-color,color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent [&_svg]:size-3.5",
+                            chosen
+                              ? "bg-accent/25 text-accent"
+                              : "bg-control text-tertiary hover:text-primary",
+                          )}
+                        >
+                          <EllipsisIcon aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 );
               })}
