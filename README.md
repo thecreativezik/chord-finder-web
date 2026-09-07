@@ -9,8 +9,8 @@ than uploaded to a Chord Finder server.
 This is the web port of the Chord Finder macOS app. The analysis engine —
 essentia.js feature extraction, tuning estimation, spectral whitening, and a
 Viterbi chord decoder over a 192-chord template bank — is shared **verbatim**
-with the macOS app and measured by the same benchmark (about 99% clean and
-97–98% hard-mix accuracy in recent runs; run `npm run eval`).
+with the macOS app and measured by the same benchmark (98.8% clean and 97.8%
+hard-mix on the harness's default seeded fixture; run `npm run eval`).
 
 ## Practice workspace
 
@@ -96,6 +96,7 @@ npm run build      # type-check + production build to dist/
 npm test           # focused theory, bass-root, WAV, and separation-budget tests
 npm run eval       # chord-engine accuracy benchmark (Node)
 EVAL_HARD=1 npm run eval   # benchmark against a dense, noisy mix
+EVAL_SEED=2 npm run eval   # same benchmark, a different synthetic mix
 ```
 
 ## Browser support
