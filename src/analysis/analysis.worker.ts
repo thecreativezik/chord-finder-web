@@ -6,8 +6,10 @@
 import Essentia from "essentia.js/dist/essentia.js-core.es.js";
 import { EssentiaWASM } from "essentia.js/dist/essentia-wasm.es.js";
 
+import { DEFAULT_TIME_SIGNATURE } from "./beat-map";
 import { classifyChords } from "./classify-chords";
 import { classifyBassRoots } from "./classify-bass-roots";
+import { detectSections } from "./detect-sections";
 import { estimateTuning, extractChromaFrames } from "./extract-chroma";
 import type {
   AnalysisResult,
@@ -96,6 +98,20 @@ function analyze(
     beats,
     durationSec,
   });
+
+  // Arrangement, read off the chroma the chord decoder just consumed rather
+  // than from a second pass over the audio. Boundaries come back unquantised on
+  // purpose: the bar grid depends on a metre the musician can still change, and
+  // the chroma is gone by then, so quantisation is the client's job (see
+  // `snapSections`). One owner for bar alignment, not two.
+  const timeSignature = DEFAULT_TIME_SIGNATURE;
+  const sections = detectSections({
+    frames: chroma.frames,
+    frameTimes: chroma.frameTimes,
+    beats,
+    durationSec,
+    timeSignature,
+  });
   post({ type: "progress", stage: "done", progress: 1 });
 
   return {
@@ -104,8 +120,10 @@ function analyze(
     bpm: Math.round(bpm * 10) / 10,
     key: { tonic: keyOut.key, scale: keyOut.scale, strength: keyOut.strength },
     beats,
+    timeSignature,
     waveform,
     segments,
+    sections,
   };
 }
 

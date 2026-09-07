@@ -14,14 +14,54 @@ export interface ChordSegment {
   edited?: boolean; // true when a musician has replaced the detected symbol
 }
 
+/**
+ * Metre in effect for the whole session. Detection is deliberately not
+ * attempted — a wrong guess renumbers every bar on screen — so this is the
+ * 4/4 default until the musician picks another metre.
+ */
+export interface TimeSignature {
+  beatsPerBar: number; // numerator: 4 in 4/4
+  beatUnit: number; // denominator: 4 in 4/4
+}
+
+/**
+ * One detected beat placed in musical coordinates. Both counters are 1-based,
+ * so `{ bar: 3, beatInBar: 1 }` is the downbeat of the third bar.
+ *
+ * Beat markers are always derived from `AnalysisResult.beats` via
+ * `buildBeatMap`, never stored: two copies of the beat times drift apart.
+ */
+export interface BeatMarker {
+  timeSec: number;
+  bar: number;
+  beatInBar: number;
+}
+
+/**
+ * One arrangement region — the repeat structure of the song rather than its
+ * harmony. Labels are letters ("A", "B", "A2") because that is what a
+ * self-similarity read actually supports; naming a region "Chorus" needs a
+ * trained model we do not have. `edited` marks a musician's own name, matching
+ * the contract ChordSegment already keeps.
+ */
+export interface SectionSegment {
+  label: string;
+  startSec: number;
+  endSec: number;
+  confidence: number; // 0..1 novelty strength at the opening boundary
+  edited?: boolean;
+}
+
 export interface AnalysisResult {
   durationSec: number;
   sampleRate: number;
   bpm: number;
   key: KeyResult;
   beats: number[]; // beat onset times in seconds
+  timeSignature: TimeSignature;
   waveform: number[]; // normalized peak envelope for the session timeline
   segments: ChordSegment[];
+  sections: SectionSegment[]; // arrangement lane; empty when the song is too short to read
 }
 
 export type AnalysisStage = "decoding" | "extracting" | "chords" | "done";

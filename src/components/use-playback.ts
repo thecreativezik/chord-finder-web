@@ -27,6 +27,8 @@ export interface Playback {
   setSourceLatency: (seconds: number) => void;
   setLoopStart: (seconds: number) => void;
   setLoopEnd: (seconds: number) => void;
+  /** Set both loop points at once — A then B would read a stale loop start. */
+  setLoop: (startSeconds: number, endSeconds: number) => void;
   clearLoop: () => void;
 }
 
@@ -223,6 +225,18 @@ export function usePlayback(
     [duration, loopStart],
   );
 
+  const setLoop = useCallback(
+    (startSeconds: number, endSeconds: number) => {
+      if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds)) return;
+      const limit = duration > 0 ? duration : Math.max(startSeconds, endSeconds);
+      const start = Math.max(0, Math.min(startSeconds, limit));
+      const end = Math.min(limit, Math.max(endSeconds, start + 0.1));
+      setLoopStartState(start);
+      setLoopEndState(end);
+    },
+    [duration],
+  );
+
   const clearLoop = useCallback(() => {
     setLoopStartState(null);
     setLoopEndState(null);
@@ -243,6 +257,7 @@ export function usePlayback(
     setSourceLatency,
     setLoopStart,
     setLoopEnd,
+    setLoop,
     clearLoop,
   };
 }

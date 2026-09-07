@@ -10,6 +10,16 @@ import {
 } from "lucide-react";
 import { Note } from "tonal";
 
+import {
+  DEFAULT_TIME_SIGNATURE,
+  TIME_SIGNATURES,
+  buildBeatMap,
+  downbeatTimes,
+  estimateDownbeatPhase,
+  formatTimeSignature,
+  parseTimeSignature,
+  snapSections,
+} from "./analysis/beat-map";
 import { getHarmonicFunction } from "./analysis/harmonic-function";
 import { transposeChordSymbol } from "./analysis/chord-notes";
 import { NO_CHORD } from "./analysis/classify-chords";
@@ -29,7 +39,13 @@ import { useMetronome } from "./components/use-metronome";
 import { formatTime, usePlayback } from "./components/use-playback";
 import { ORIGINAL_MIX_TRACK_ID, useStemMixer } from "./components/use-stem-mixer";
 import { useSeparation } from "./separation/use-separation";
-import type { AnalysisStage, ChordAnalysisMode, ChordSegment } from "./types";
+import type {
+  AnalysisStage,
+  ChordAnalysisMode,
+  ChordSegment,
+  SectionSegment,
+  TimeSignature,
+} from "./types";
 
 const STAGE_LABEL: Record<AnalysisStage, string> = {
   decoding: "Decoding audio",
@@ -60,6 +76,19 @@ function findActiveIndex(segments: ChordSegment[], time: number): number {
     }
   }
   return result;
+}
+
+/**
+ * Name overrides are keyed by the detected start time, not by index: snapping
+ * boundaries onto a new bar grid can merge sections and renumber them, but the
+ * time the detector reported never moves.
+ */
+function sectionKey(section: SectionSegment): string {
+  return section.startSec.toFixed(3);
+}
+
+function findActiveSectionIndex(sections: SectionSegment[], time: number): number {
+  return sections.findIndex((section) => time >= section.startSec && time < section.endSec);
 }
 
 function transposeSegment(
@@ -110,6 +139,32 @@ function KeyPicker({
   );
 }
 
+function TimeSignaturePicker({
+  value,
+  onChange,
+}: {
+  value: TimeSignature;
+  onChange: (signature: TimeSignature) => void;
+}) {
+  return (
+    <label className="flex shrink-0 flex-col gap-0.5">
+      <span className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-tertiary">Metre</span>
+      <select
+        value={formatTimeSignature(value)}
+        onChange={(event) => onChange(parseTimeSignature(event.target.value))}
+        className="-ml-1 rounded bg-transparent px-1 text-sm font-semibold text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        aria-label="Time signature"
+        title="Bar numbers and the click accent follow this metre. It is not detected."
+      >
+        {TIME_SIGNATURES.map((signature) => {
+          const label = formatTimeSignature(signature);
+          return <option key={label} value={label}>{label}</option>;
+        })}
+      </select>
+    </label>
+  );
+}
+
 export function App() {
   const { status, analyzeFile, reset } = useAnalysis();
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
@@ -118,6 +173,8 @@ export function App() {
   const [chordSourceStatus, setChordSourceStatus] = useState<ChordSourceStatus>({ state: "idle" });
   const [capo, setCapo] = useState(0);
   const [transposeSemitones, setTransposeSemitones] = useState(0);
+  const [timeSignature, setTimeSignature] = useState<TimeSignature>(DEFAULT_TIME_SIGNATURE);
+  const [sectionNames, setSectionNames] = useState<Record<string, string>>({});
   const [editRequest, setEditRequest] = useState<EditRequest | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("wav");
   const [exportStatus, setExportStatus] = useState<MixExportStatus>({ state: "idle" });
@@ -144,9 +201,39 @@ export function App() {
     sourceFile,
     transposeSemitones,
   );
+  // Bar phase is estimated from the *original mix* chords on purpose. Deriving
+  // it from whichever stem is currently selected would shift the bar grid every
+  // time the musician changed chord source, which is worse than being slightly
+  // less certain.
+  const downbeatPhase = useMemo(
+    () => (result ? estimateDownbeatPhase(result.beats, result.segments, timeSignature) : 0),
+    [result, timeSignature],
+  );
+  const beatMap = useMemo(
+    () => (result ? buildBeatMap(result.beats, timeSignature, downbeatPhase) : []),
+    [downbeatPhase, result, timeSignature],
+  );
+  const keyedSections = useMemo(() => {
+    if (!result) return [];
+    const named = result.sections.map((section) => {
+      const override = sectionNames[sectionKey(section)];
+      return {
+        ...section,
+        label: override ?? section.label,
+        edited: Boolean(override) || Boolean(section.edited),
+        detectedKey: sectionKey(section),
+      };
+    });
+    return snapSections(named, downbeatTimes(beatMap));
+  }, [beatMap, result, sectionNames]);
+  const sections = useMemo<SectionSegment[]>(
+    () => keyedSections.map(({ detectedKey: _detectedKey, ...section }) => section),
+    [keyedSections],
+  );
+
   const metronome = useMetronome({
     audio: audioEl,
-    beats: result?.beats ?? [],
+    beatMap,
     isPlaying: playback.isPlaying,
     playbackRate: playback.playbackRate,
     sourceLatencySec: stemMixer.sourceLatencySec,
@@ -181,6 +268,10 @@ export function App() {
     setChordSourceStatus({ state: "idle" });
     setTransposeSemitones(0);
     setCapo(0);
+    // The result reports the metre the arrangement was read under; the picker
+    // starts there rather than at a second, independent default.
+    setTimeSignature(result.timeSignature);
+    setSectionNames({});
     setExportStatus({ state: "idle" });
   }, [result]);
 
@@ -252,6 +343,10 @@ export function App() {
     () => (baseSegments.length ? findActiveIndex(baseSegments, playback.currentTime) : -1),
     [baseSegments, playback.currentTime],
   );
+  const activeSectionIndex = useMemo(
+    () => (sections.length ? findActiveSectionIndex(sections, playback.currentTime) : -1),
+    [playback.currentTime, sections],
+  );
   const activeBaseSegment = activeIndex >= 0 ? baseSegments[activeIndex] : null;
   const activeSegment = activeBaseSegment ? transposeSegment(activeBaseSegment, transposeSemitones, preferFlats) : null;
   const previousSegment = activeIndex > 0 ? transposeSegment(baseSegments[activeIndex - 1], transposeSemitones, preferFlats) : null;
@@ -280,6 +375,17 @@ export function App() {
           : segment),
     }));
   }, [chordSourceId, originalPreferFlats, transposeSemitones]);
+
+  const renameSection = useCallback((index: number, label: string) => {
+    const target = keyedSections[index];
+    if (!target) return;
+    setSectionNames((current) => ({ ...current, [target.detectedKey]: label }));
+  }, [keyedSections]);
+
+  const loopSection = useCallback((section: SectionSegment) => {
+    playback.setLoop(section.startSec, section.endSec);
+    playback.seek(section.startSec);
+  }, [playback.seek, playback.setLoop]);
 
   const requestChordEdit = (index: number) => {
     if (rootOnlySource) return;
@@ -492,6 +598,7 @@ export function App() {
                     <h2 className="truncate text-sm font-semibold" title={status.fileName}>{status.fileName}</h2>
                     <p className="mt-0.5 text-mini text-tertiary tabular-nums">
                       {formatTime(result.durationSec)} · {baseSegments.length} {rootOnlySource ? "root regions · roots" : "chord regions · chords"} from {sourceLabel}
+                      {sections.length > 0 ? ` · ${sections.length} sections` : ""}
                     </p>
                   </div>
                   <button
@@ -504,7 +611,7 @@ export function App() {
                     <SlidersHorizontalIcon aria-hidden="true" /> Mixer
                   </button>
                 </div>
-                <div data-session-stats className="grid w-full shrink-0 grid-cols-3 gap-x-4 gap-y-1 border-t border-separator pt-2 sm:grid-cols-5 lg:flex lg:w-auto lg:items-center lg:gap-7 lg:border-t-0 lg:pt-0">
+                <div data-session-stats className="grid w-full shrink-0 grid-cols-3 gap-x-4 gap-y-1 border-t border-separator pt-2 sm:grid-cols-3 lg:flex lg:w-auto lg:items-center lg:gap-7 lg:border-t-0 lg:pt-0">
                   <Stat
                     label={rootOnlySource ? "Root" : capo > 0 ? `Capo ${capo} shape` : "Chord"}
                     value={rootOnlySource ? activeChord : capoShape}
@@ -513,13 +620,14 @@ export function App() {
                   <Stat label="Number · solfa" value={harmonicFunction.shortLabel} />
                   <KeyPicker tonic={selectedKeyTonic} scale={result.key.scale} semitones={transposeSemitones} onChange={changeSongKey} />
                   <Stat label="Tempo" value={`${result.bpm} BPM`} />
+                  <TimeSignaturePicker value={timeSignature} onChange={setTimeSignature} />
                   <Stat label="Confidence" value={activeBaseSegment ? activeBaseSegment.edited ? "Edited" : `${Math.round(activeBaseSegment.confidence * 100)}%` : "—"} />
                 </div>
               </div>
 
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
                 <div className="shrink-0 p-3 sm:p-4">
-                  <SessionTimeline waveform={result.waveform} segments={displaySegments} duration={result.durationSec} currentTime={playback.currentTime} activeIndex={activeIndex} loopStart={playback.loopStart} loopEnd={playback.loopEnd} onSeek={playback.seek} onEditChord={rootOnlySource ? undefined : requestChordEdit} keyTonic={selectedKeyTonic} analysisMode={sourceAnalysisMode} />
+                  <SessionTimeline waveform={result.waveform} segments={displaySegments} duration={result.durationSec} currentTime={playback.currentTime} activeIndex={activeIndex} loopStart={playback.loopStart} loopEnd={playback.loopEnd} onSeek={playback.seek} onEditChord={rootOnlySource ? undefined : requestChordEdit} keyTonic={selectedKeyTonic} analysisMode={sourceAnalysisMode} sections={sections} activeSectionIndex={activeSectionIndex} beatMap={beatMap} onLoopSection={loopSection} onRenameSection={renameSection} />
                 </div>
                 <ChordWorkbench
                   key={`${sourceKey}:${chordSourceId}`}

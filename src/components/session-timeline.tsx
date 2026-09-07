@@ -1,12 +1,16 @@
-import { useId, useMemo, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { PencilIcon } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { PencilIcon, Repeat2Icon } from "lucide-react";
 
 import { cn } from "../cn";
+import { beatAtTime, formatBarBeat } from "../analysis/beat-map";
 import { getHarmonicFunction } from "../analysis/harmonic-function";
-import type { ChordAnalysisMode, ChordSegment } from "../types";
+import type { BeatMarker, ChordAnalysisMode, ChordSegment, SectionSegment } from "../types";
 
 const PX_PER_SECOND = 22;
 const MIN_TIMELINE_WIDTH = 720;
+/** Minimum gap between two printed bar numbers before we thin them out. */
+const MIN_BAR_LABEL_PX = 34;
+const BAR_LABEL_STRIDES = [1, 2, 4, 8, 16, 32, 64, 128] as const;
 const MAX_TIMELINE_WIDTH = 16_000;
 const MAX_WAVEFORM_POINTS = 1_600;
 const WAVEFORM_VIEWBOX_WIDTH = 1_000;
@@ -24,6 +28,13 @@ interface SessionTimelineProps {
   onEditChord?: (index: number) => void;
   keyTonic: string;
   analysisMode: ChordAnalysisMode;
+  /** Arrangement lane. Empty when the song was too short to read structure. */
+  sections: SectionSegment[];
+  activeSectionIndex: number;
+  /** Musical coordinates for the bar ruler; empty before analysis. */
+  beatMap: BeatMarker[];
+  onLoopSection?: (section: SectionSegment) => void;
+  onRenameSection?: (index: number, label: string) => void;
 }
 
 interface TimelineTick {
@@ -124,10 +135,18 @@ export function SessionTimeline({
   onEditChord,
   keyTonic,
   analysisMode,
+  sections,
+  activeSectionIndex,
+  beatMap,
+  onLoopSection,
+  onRenameSection,
 }: SessionTimelineProps) {
   const rootOnly = analysisMode === "bass-root";
   const gradientId = `session-waveform-${useId().replace(/:/g, "")}`;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [renamingIndex, setRenamingIndex] = useState<number | null>(null);
+  const [draftLabel, setDraftLabel] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const segmentFallbackDuration = useMemo(
     () => segments.reduce((latest, segment) => Math.max(latest, segment.endSec), 0),
@@ -147,6 +166,51 @@ export function SessionTimeline({
     [timelineDuration, trackWidth],
   );
   const majorTicks = useMemo(() => ticks.filter((tick) => tick.major), [ticks]);
+
+  // Bar ruler. Only downbeats from bar 1 onwards are drawn; a pickup lands in
+  // bar 0 and numbering it would shift the whole chart by a bar.
+  const barTicks = useMemo(
+    () => beatMap.filter((marker) => marker.beatInBar === 1 && marker.bar >= 1),
+    [beatMap],
+  );
+  const barLabelStride = useMemo(() => {
+    if (barTicks.length < 2) return 1;
+    const span = barTicks[barTicks.length - 1].timeSec - barTicks[0].timeSec;
+    const spacingPx = (span / (barTicks.length - 1) / timelineDuration) * trackWidth;
+    if (!Number.isFinite(spacingPx) || spacingPx <= 0) return 1;
+    return (
+      BAR_LABEL_STRIDES.find((stride) => stride * spacingPx >= MIN_BAR_LABEL_PX) ??
+      BAR_LABEL_STRIDES[BAR_LABEL_STRIDES.length - 1]
+    );
+  }, [barTicks, timelineDuration, trackWidth]);
+
+  const activeSection =
+    activeSectionIndex >= 0 && activeSectionIndex < sections.length
+      ? sections[activeSectionIndex]
+      : null;
+  const playheadBeat = beatAtTime(beatMap, clampedTime);
+
+  useEffect(() => {
+    if (renamingIndex !== null) renameInputRef.current?.select();
+  }, [renamingIndex]);
+
+  // A re-analysis or a metre change can shorten the lane under an open editor.
+  useEffect(() => {
+    setRenamingIndex((current) => (current !== null && current >= sections.length ? null : current));
+  }, [sections.length]);
+
+  const startRename = (index: number) => {
+    if (!onRenameSection) return;
+    setDraftLabel(sections[index]?.label ?? "");
+    setRenamingIndex(index);
+  };
+
+  const commitRename = (index: number) => {
+    const trimmed = draftLabel.trim();
+    setRenamingIndex(null);
+    if (!onRenameSection || trimmed.length === 0 || trimmed === sections[index]?.label) return;
+    onRenameSection(index, trimmed);
+  };
 
   const hasLoop =
     loopStart !== null &&
@@ -224,8 +288,23 @@ export function SessionTimeline({
             className="truncate font-mono text-mini text-tertiary tabular-nums"
           >
             {formatTime(clampedTime)} / {formatTime(timelineDuration)}
+            {playheadBeat ? ` · bar ${formatBarBeat(playheadBeat)}` : ""}
           </output>
         </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+        {onLoopSection && activeSection ? (
+          <button
+            type="button"
+            onClick={() => onLoopSection(activeSection)}
+            className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-small font-medium text-secondary transition-[background-color,color,scale] duration-150 ease-out hover:bg-control hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.96] [&_svg]:size-3.5"
+            aria-label={`Loop section ${activeSection.label}`}
+            title={`Loop section ${activeSection.label}`}
+          >
+            <Repeat2Icon aria-hidden="true" />
+            <span className="max-w-28 truncate">Loop {activeSection.label}</span>
+          </button>
+        ) : null}
 
         {!rootOnly && onEditChord && editSegment && editIndex !== null ? (
           <button
@@ -239,6 +318,7 @@ export function SessionTimeline({
             <span className="max-w-28 truncate">Edit {editSegment.symbol}</span>
           </button>
         ) : null}
+        </div>
       </div>
 
       <div data-scroll-lane className="w-full overflow-x-auto overscroll-x-contain [scrollbar-color:var(--cf-control)_transparent] [scrollbar-width:thin]">
@@ -278,6 +358,34 @@ export function SessionTimeline({
               );
             })}
           </div>
+
+          {barTicks.length >= 2 ? (
+            <div
+              className="relative h-4 cursor-crosshair border-b border-separator bg-well"
+              onPointerDown={seekFromPointer}
+              aria-hidden="true"
+            >
+              {barTicks.map((marker) => {
+                const labelled = (marker.bar - 1) % barLabelStride === 0;
+                return (
+                  <span
+                    key={`bar-${marker.bar}`}
+                    className={cn(
+                      "absolute bottom-0 w-px",
+                      labelled ? "h-full bg-tertiary/50" : "h-1.5 bg-tertiary/30",
+                    )}
+                    style={{ left: `${(marker.timeSec / timelineDuration) * 100}%` }}
+                  >
+                    {labelled ? (
+                      <span className="absolute left-1 top-0 whitespace-nowrap font-mono text-[9px] leading-4 text-tertiary tabular-nums">
+                        {marker.bar}
+                      </span>
+                    ) : null}
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
 
           <div
             role="slider"
@@ -393,6 +501,90 @@ export function SessionTimeline({
               );
             })}
           </div>
+
+          {sections.length > 0 ? (
+            <div
+              role="list"
+              aria-label="Arrangement sections"
+              className="relative h-9 overflow-hidden border-t border-separator bg-well"
+            >
+              {sections.map((section, index) => {
+                const start = clamp(
+                  Number.isFinite(section.startSec) ? section.startSec : 0,
+                  0,
+                  timelineDuration,
+                );
+                const end = clamp(
+                  Number.isFinite(section.endSec) ? section.endSec : start,
+                  start,
+                  timelineDuration,
+                );
+                if (end <= start) return null;
+
+                const active = index === activeSectionIndex;
+                const startBeat = beatAtTime(beatMap, start);
+                const barRange = startBeat ? `, from bar ${startBeat.bar}` : "";
+                const widthPercent = ((end - start) / timelineDuration) * 100;
+
+                return (
+                  <div
+                    key={`section-${section.startSec}-${index}`}
+                    role="listitem"
+                    className="absolute inset-y-0 px-px"
+                    style={{ left: `${(start / timelineDuration) * 100}%`, width: `${widthPercent}%` }}
+                  >
+                    {renamingIndex === index ? (
+                      <input
+                        ref={renameInputRef}
+                        value={draftLabel}
+                        onChange={(event) => setDraftLabel(event.target.value)}
+                        onBlur={() => commitRename(index)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitRename(index);
+                          } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            setRenamingIndex(null);
+                          }
+                        }}
+                        maxLength={24}
+                        aria-label={`Rename section ${section.label}`}
+                        className="size-full min-w-0 rounded-[3px] border border-accent bg-background px-1.5 text-small-strong text-primary outline-none"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onSeek(start)}
+                        onDoubleClick={() => startRename(index)}
+                        aria-current={active ? "true" : undefined}
+                        aria-label={`Section ${section.label}${barRange}, ${formatTime(start)} to ${formatTime(end)}${section.edited ? ", renamed" : ""}${onRenameSection ? ". Double-click to rename" : ""}`}
+                        title={`Section ${section.label}  ${formatTime(start)} - ${formatTime(end)}${onRenameSection ? "  Double-click to rename" : ""}`}
+                        className={cn(
+                          "flex size-full min-w-0 items-center gap-1.5 overflow-hidden rounded-[3px] px-2 text-left transition-[background-color,color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
+                          active
+                            ? "bg-accent/15 text-accent"
+                            : "bg-control-subtle text-secondary hover:bg-control",
+                        )}
+                      >
+                        <span className="truncate text-small-strong leading-4">{section.label}</span>
+                        {section.edited ? null : (
+                          <span
+                            className={cn(
+                              "shrink-0 font-mono text-[9px] leading-3 tabular-nums",
+                              active ? "text-accent/70" : "text-quaternary",
+                            )}
+                          >
+                            {Math.round(section.confidence * 100)}%
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
 
           {hasLoop && loopWidth > 0 ? (
             <div

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { BeatMarker } from "../types";
+
 const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD_SEC = 0.12;
 
@@ -17,7 +19,8 @@ interface ScheduledClick {
 
 interface UseMetronomeInput {
   audio: HTMLAudioElement | null;
-  beats: number[];
+  /** Beats in musical coordinates; the accent follows `beatInBar`, not an index. */
+  beatMap: BeatMarker[];
   isPlaying: boolean;
   playbackRate: number;
   /** SoundTouch delay expressed in the same source-time units as beat times. */
@@ -67,19 +70,40 @@ export function metronomeDelayUntilBeat(
   return Math.max(0, (beatTime - metronomeSourceTime(rawTime, sourceLatencySec)) / safeRate);
 }
 
-function buildClickPoints(beats: number[], density: MetronomeDensity): ClickPoint[] {
+/**
+ * Accents follow the bar, not the beat index.
+ *
+ * This used to be `index % 4 === 0`, which quietly asserted 4/4 with the
+ * downbeat on the very first detected beat. The beat map carries the metre and
+ * the estimated phase, so the click now lands the accent where the bar actually
+ * starts — and a song in 3/4, or one whose tracker locked on to beat two, stops
+ * being clicked against itself.
+ */
+export function buildClickPoints(beatMap: BeatMarker[], density: MetronomeDensity): ClickPoint[] {
   if (density === 0.5) {
-    return beats.filter((_, index) => index % 2 === 0).map((time, index) => ({
-      time,
-      accent: index % 2 === 0,
-    }));
+    // Half the clicks, still every other beat so the pulse stays even — but
+    // phased off the first downbeat rather than off beat zero. Taking the even
+    // indices unconditionally drops every accent when the estimated downbeat
+    // lands on an odd index, which leaves the click with no bar at all.
+    //
+    // In an odd metre the downbeats alternate parity, so half of them fall on
+    // the skipped beats. That is inherent to halving the rate in 3/4 or 7/8;
+    // an even pulse is the better of the two compromises.
+    const firstDownbeat = beatMap.findIndex((marker) => marker.beatInBar === 1);
+    const parity = firstDownbeat < 0 ? 0 : firstDownbeat % 2;
+    return beatMap
+      .filter((_, index) => index % 2 === parity)
+      .map((marker) => ({ time: marker.timeSec, accent: marker.beatInBar === 1 }));
   }
 
   const points: ClickPoint[] = [];
-  for (let index = 0; index < beats.length; index++) {
-    points.push({ time: beats[index], accent: index % 4 === 0 });
-    if (density === 2 && index < beats.length - 1) {
-      points.push({ time: (beats[index] + beats[index + 1]) / 2, accent: false });
+  for (let index = 0; index < beatMap.length; index++) {
+    points.push({ time: beatMap[index].timeSec, accent: beatMap[index].beatInBar === 1 });
+    if (density === 2 && index < beatMap.length - 1) {
+      points.push({
+        time: (beatMap[index].timeSec + beatMap[index + 1].timeSec) / 2,
+        accent: false,
+      });
     }
   }
   return points;
@@ -120,7 +144,7 @@ function cancelClick(click: ScheduledClick): void {
 /** A look-ahead scheduler that follows Essentia's detected beat grid. */
 export function useMetronome({
   audio,
-  beats,
+  beatMap,
   isPlaying,
   playbackRate,
   sourceLatencySec = 0,
@@ -129,7 +153,7 @@ export function useMetronome({
   const [density, setDensity] = useState<MetronomeDensity>(1);
   const [volume, setVolumeState] = useState(1);
   const contextRef = useRef<AudioContext | null>(null);
-  const clickPoints = useMemo(() => buildClickPoints(beats, density), [beats, density]);
+  const clickPoints = useMemo(() => buildClickPoints(beatMap, density), [beatMap, density]);
 
   const toggle = useCallback(() => {
     const next = !enabled;
