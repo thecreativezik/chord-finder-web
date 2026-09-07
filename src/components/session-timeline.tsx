@@ -1,14 +1,35 @@
-import { useId, useMemo, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { PencilIcon } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
+import { EllipsisIcon, PencilIcon, Repeat2Icon, XIcon } from "lucide-react";
 
 import { cn } from "../cn";
+import { beatAtTime, formatBarBeat } from "../analysis/beat-map";
 import { getHarmonicFunction } from "../analysis/harmonic-function";
-import type { ChordAnalysisMode, ChordSegment } from "../types";
+import type { BeatMarker, ChordAnalysisMode, ChordSegment, SectionSegment } from "../types";
 
 const PX_PER_SECOND = 22;
 const MIN_TIMELINE_WIDTH = 720;
+/** Minimum gap between two printed bar numbers before we thin them out. */
+const MIN_BAR_LABEL_PX = 34;
+const BAR_LABEL_STRIDES = [1, 2, 4, 8, 16, 32, 64, 128] as const;
 const MAX_TIMELINE_WIDTH = 16_000;
 const MAX_WAVEFORM_POINTS = 1_600;
+const SECTION_LABEL_MAX_LENGTH = 24;
+/**
+ * Sections are addressed by their bounds rather than by an index or a generated
+ * id: an index retargets silently when the lane is recomputed, and an id would
+ * have to survive a recomputation that legitimately merges regions. The epsilon
+ * absorbs float noise from `snapSections` re-deriving the same boundary.
+ */
+const SECTION_BOUND_EPSILON = 1e-6;
 const WAVEFORM_VIEWBOX_WIDTH = 1_000;
 const WAVEFORM_VIEWBOX_HEIGHT = 64;
 
@@ -24,6 +45,38 @@ interface SessionTimelineProps {
   onEditChord?: (index: number) => void;
   keyTonic: string;
   analysisMode: ChordAnalysisMode;
+  /** Arrangement lane. Empty when the song was too short to read structure. */
+  sections: SectionSegment[];
+  activeSectionIndex: number;
+  /** Musical coordinates for the bar ruler; empty before analysis. */
+  beatMap: BeatMarker[];
+  onLoopSection?: (section: SectionSegment) => void;
+  onRenameSection?: (index: number, label: string) => void;
+  /**
+   * Changes when the analysed song or chord source is replaced. Any open
+   * section panel is discarded, so a pending action cannot be applied to a
+   * region belonging to different audio.
+   */
+  analysisKey?: string;
+  /**
+   * Changes when the musician picks a different metre. Needed as its own
+   * signal because a metre change renumbers every bar on screen while
+   * frequently leaving the section *bounds* untouched — 32s and 64s are
+   * downbeats in 4/4 and in 2/4 — so a bounds comparison misses it.
+   */
+  metreKey?: string;
+}
+
+interface SectionBounds {
+  startSec: number;
+  endSec: number;
+}
+
+function sameBounds(section: SectionSegment, bounds: SectionBounds): boolean {
+  return (
+    Math.abs(section.startSec - bounds.startSec) < SECTION_BOUND_EPSILON &&
+    Math.abs(section.endSec - bounds.endSec) < SECTION_BOUND_EPSILON
+  );
 }
 
 interface TimelineTick {
@@ -124,10 +177,31 @@ export function SessionTimeline({
   onEditChord,
   keyTonic,
   analysisMode,
+  sections,
+  activeSectionIndex,
+  beatMap,
+  onLoopSection,
+  onRenameSection,
+  analysisKey,
+  metreKey,
 }: SessionTimelineProps) {
   const rootOnly = analysisMode === "bass-root";
   const gradientId = `session-waveform-${useId().replace(/:/g, "")}`;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  // The section the panel acts on, held as bounds so that playback moving into
+  // another region cannot retarget it.
+  const [actionTarget, setActionTarget] = useState<SectionBounds | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [draftLabel, setDraftLabel] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [invalidationNotice, setInvalidationNotice] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const sectionTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = `${useId().replace(/:/g, "")}-section-actions`;
+  const panelHeadingId = `${panelId}-heading`;
+  const renameFieldId = `${panelId}-name`;
+  const renameErrorId = `${panelId}-error`;
 
   const segmentFallbackDuration = useMemo(
     () => segments.reduce((latest, segment) => Math.max(latest, segment.endSec), 0),
@@ -148,6 +222,150 @@ export function SessionTimeline({
   );
   const majorTicks = useMemo(() => ticks.filter((tick) => tick.major), [ticks]);
 
+  // Bar ruler. Only downbeats from bar 1 onwards are drawn; a pickup lands in
+  // bar 0 and numbering it would shift the whole chart by a bar.
+  const barTicks = useMemo(
+    () => beatMap.filter((marker) => marker.beatInBar === 1 && marker.bar >= 1),
+    [beatMap],
+  );
+  const barLabelStride = useMemo(() => {
+    if (barTicks.length < 2) return 1;
+    const span = barTicks[barTicks.length - 1].timeSec - barTicks[0].timeSec;
+    const spacingPx = (span / (barTicks.length - 1) / timelineDuration) * trackWidth;
+    if (!Number.isFinite(spacingPx) || spacingPx <= 0) return 1;
+    return (
+      BAR_LABEL_STRIDES.find((stride) => stride * spacingPx >= MIN_BAR_LABEL_PX) ??
+      BAR_LABEL_STRIDES[BAR_LABEL_STRIDES.length - 1]
+    );
+  }, [barTicks, timelineDuration, trackWidth]);
+
+  const playheadBeat = beatAtTime(beatMap, clampedTime);
+
+  const sectionKey = (section: SectionBounds) => `${section.startSec}-${section.endSec}`;
+  const targetIndex = actionTarget
+    ? sections.findIndex((section) => sameBounds(section, actionTarget))
+    : -1;
+  const targetSection = targetIndex >= 0 ? sections[targetIndex] : null;
+
+  const focusTrigger = useCallback((bounds: SectionBounds) => {
+    sectionTriggerRefs.current.get(`${bounds.startSec}-${bounds.endSec}`)?.focus();
+  }, []);
+
+  /**
+   * Move focus into the panel when it opens or switches to the editor. The
+   * panel follows the entire scrolling lane in DOM order, so a keyboard user
+   * who did not get focus moved here would have to tab through every remaining
+   * region to reach Loop and Rename. Keyed on the target's bounds so the
+   * playhead ticking cannot steal focus back.
+   */
+  const panelFocusKey = actionTarget ? `${sectionKey(actionTarget)}:${isRenaming}` : null;
+  useEffect(() => {
+    if (panelFocusKey === null) return;
+    if (isRenaming) {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+      return;
+    }
+    panelRef.current?.querySelector("button")?.focus();
+  }, [isRenaming, panelFocusKey]);
+
+  /**
+   * A metre change or a re-analysis can move, merge or remove the region the
+   * panel is acting on. Discard the panel rather than retarget it, and leave
+   * focus where the musician put it — they are standing on the metre picker,
+   * not on the lane. An uncommitted draft is announced, never applied to
+   * whatever region now occupies those bounds.
+   */
+  useEffect(() => {
+    if (!actionTarget) return;
+    if (sections.some((section) => sameBounds(section, actionTarget))) return;
+    setActionTarget(null);
+    setRenameError(null);
+    if (isRenaming) {
+      setIsRenaming(false);
+      setInvalidationNotice("Sections changed. The rename was cancelled.");
+    } else {
+      setInvalidationNotice("Sections changed. Section actions closed.");
+    }
+    // Deliberately not focusTrigger(): the region it pointed at is gone.
+  }, [actionTarget, isRenaming, sections]);
+
+  /**
+   * A metre change invalidates a pending action even when the bounds survive
+   * it: the region the musician chose is at bar 17 before the change and bar 33
+   * after, so an uncommitted draft is no longer addressed to what they picked.
+   * Focus stays on the picker they are standing on.
+   */
+  const seenMetreKey = useRef(metreKey);
+  useEffect(() => {
+    if (seenMetreKey.current === metreKey) return;
+    seenMetreKey.current = metreKey;
+    if (!actionTarget) return;
+    setActionTarget(null);
+    setRenameError(null);
+    if (isRenaming) {
+      setIsRenaming(false);
+      setInvalidationNotice("Sections changed. The rename was cancelled.");
+    } else {
+      setInvalidationNotice("Sections changed. Section actions closed.");
+    }
+  }, [actionTarget, isRenaming, metreKey]);
+
+  // A replacement song or chord source invalidates a pending action outright,
+  // even in the unlikely case that a region with identical bounds exists in it.
+  useEffect(() => {
+    setActionTarget(null);
+    setIsRenaming(false);
+    setRenameError(null);
+    setInvalidationNotice("");
+  }, [analysisKey]);
+
+  const openSectionActions = (section: SectionSegment) => {
+    setActionTarget({ startSec: section.startSec, endSec: section.endSec });
+    setIsRenaming(false);
+    setRenameError(null);
+    setInvalidationNotice("");
+  };
+
+  const closeSectionActions = () => {
+    const bounds = actionTarget;
+    setActionTarget(null);
+    setIsRenaming(false);
+    setRenameError(null);
+    if (bounds) focusTrigger(bounds);
+  };
+
+  const startRename = () => {
+    if (!onRenameSection || !targetSection) return;
+    setDraftLabel(targetSection.label);
+    setRenameError(null);
+    setIsRenaming(true);
+  };
+
+  const commitRename = () => {
+    const trimmed = draftLabel.trim();
+    if (trimmed.length === 0) {
+      // Stays open with the error beside the input; a blank name is a mistake,
+      // not an instruction to discard the section's name.
+      setRenameError("Enter a name for this section.");
+      renameInputRef.current?.focus();
+      return;
+    }
+    if (!onRenameSection || targetIndex < 0 || !targetSection) return;
+    if (trimmed !== targetSection.label) onRenameSection(targetIndex, trimmed);
+    // A label-only rename does not move the bounds, so the panel target stays
+    // valid and focus returns to the trigger it was opened from.
+    setIsRenaming(false);
+    setRenameError(null);
+    closeSectionActions();
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setRenameError(null);
+    closeSectionActions();
+  };
+
   const hasLoop =
     loopStart !== null &&
     loopEnd !== null &&
@@ -158,6 +376,11 @@ export function SessionTimeline({
   const safeLoopEnd = hasLoop ? clamp(loopEnd, safeLoopStart, timelineDuration) : 0;
   const loopLeft = (safeLoopStart / timelineDuration) * 100;
   const loopWidth = ((safeLoopEnd - safeLoopStart) / timelineDuration) * 100;
+  // Named only when the loop actually coincides with a region; an A/B loop set
+  // by ear stays anonymous rather than borrowing a nearby section's name.
+  const loopedSection = hasLoop
+    ? sections.find((section) => sameBounds(section, { startSec: safeLoopStart, endSec: safeLoopEnd })) ?? null
+    : null;
 
   const validSelectedIndex =
     selectedIndex !== null && selectedIndex >= 0 && selectedIndex < segments.length
@@ -214,18 +437,30 @@ export function SessionTimeline({
       aria-label="Song timeline"
       className="overflow-hidden rounded-lg bg-well shadow-[inset_0_0_0_1px_var(--cf-separator)]"
     >
-      <div className="flex min-h-11 items-center justify-between gap-3 border-b border-separator px-3">
-        <div className="flex min-w-0 items-baseline gap-2">
+      {/* Under 640px the readout gets its own row: at 360px the single-row
+          version clipped `0:00 / 1:36 · bar 1.1` to `0:00 / 1:…`, which hides
+          exactly the musical position the bar ruler exists to provide. */}
+      <div className="flex min-h-11 flex-col gap-1 border-b border-separator px-3 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:py-0">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <h2 className="text-mini-strong shrink-0 text-secondary">
             {rootOnly ? "Detected roots" : "Timeline"}
           </h2>
           <output
             aria-label={`Playhead at ${formatTime(clampedTime)} of ${formatTime(timelineDuration)}`}
-            className="truncate font-mono text-mini text-tertiary tabular-nums"
+            className="font-mono text-mini text-tertiary tabular-nums"
           >
             {formatTime(clampedTime)} / {formatTime(timelineDuration)}
+            {playheadBeat ? ` · bar ${formatBarBeat(playheadBeat)}` : ""}
           </output>
         </div>
+
+        <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+        {loopedSection ? (
+          <span className="inline-flex items-center gap-1.5 rounded-md px-2 text-mini font-medium text-accent [&_svg]:size-3.5">
+            <Repeat2Icon aria-hidden="true" />
+            <span className="max-w-28 truncate">Looping {loopedSection.label}</span>
+          </span>
+        ) : null}
 
         {!rootOnly && onEditChord && editSegment && editIndex !== null ? (
           <button
@@ -239,7 +474,14 @@ export function SessionTimeline({
             <span className="max-w-28 truncate">Edit {editSegment.symbol}</span>
           </button>
         ) : null}
+        </div>
       </div>
+
+      {sections.length > 0 ? (
+        <p className="border-b border-separator px-3 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-tertiary">
+          Sections
+        </p>
+      ) : null}
 
       <div data-scroll-lane className="w-full overflow-x-auto overscroll-x-contain [scrollbar-color:var(--cf-control)_transparent] [scrollbar-width:thin]">
         <div
@@ -278,6 +520,131 @@ export function SessionTimeline({
               );
             })}
           </div>
+
+          {barTicks.length >= 2 ? (
+            <div
+              data-bar-ruler
+              className="relative h-4 cursor-crosshair border-b border-separator bg-well"
+              onPointerDown={seekFromPointer}
+              aria-hidden="true"
+            >
+              {barTicks.map((marker) => {
+                const labelled = (marker.bar - 1) % barLabelStride === 0;
+                return (
+                  <span
+                    key={`bar-${marker.bar}`}
+                    className={cn(
+                      "absolute bottom-0 w-px",
+                      labelled ? "h-full bg-tertiary/50" : "h-1.5 bg-tertiary/30",
+                    )}
+                    style={{ left: `${(marker.timeSec / timelineDuration) * 100}%` }}
+                  >
+                    {labelled ? (
+                      <span className="absolute left-1 top-0 whitespace-nowrap font-mono text-[9px] leading-4 text-tertiary tabular-nums">
+                        {marker.bar}
+                      </span>
+                    ) : null}
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {sections.length > 0 ? (
+            <div
+              role="list"
+              aria-label="Arrangement sections"
+              data-section-band
+              className="relative h-9 border-b border-separator bg-well"
+            >
+              {sections.map((section, index) => {
+                const start = clamp(
+                  Number.isFinite(section.startSec) ? section.startSec : 0,
+                  0,
+                  timelineDuration,
+                );
+                const end = clamp(
+                  Number.isFinite(section.endSec) ? section.endSec : start,
+                  start,
+                  timelineDuration,
+                );
+                if (end <= start) return null;
+
+                const active = index === activeSectionIndex;
+                const chosen = actionTarget !== null && sameBounds(section, actionTarget);
+                const key = sectionKey(section);
+                const startBeat = beatAtTime(beatMap, start);
+                const barRange = startBeat ? `, from bar ${startBeat.bar}` : "";
+                const widthPercent = ((end - start) / timelineDuration) * 100;
+
+                return (
+                  <div
+                    key={`section-${key}-${index}`}
+                    role="listitem"
+                    className="absolute inset-y-0 flex items-stretch px-px"
+                    style={{ left: `${(start / timelineDuration) * 100}%`, width: `${widthPercent}%` }}
+                  >
+                    {/* Fills the whole region so a click anywhere in it seeks,
+                        and sits beneath the pinned label group. */}
+                    <button
+                      type="button"
+                      onClick={() => onSeek(start)}
+                      aria-current={active ? "true" : undefined}
+                      aria-label={`Section ${section.label}${barRange}, ${formatTime(start)} to ${formatTime(end)}${section.edited ? ", renamed" : ""}. Seeks to its start`}
+                      className={cn(
+                        "absolute inset-0 rounded-[3px] transition-[background-color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
+                        active ? "bg-accent/15" : "bg-control-subtle hover:bg-control",
+                      )}
+                    />
+
+                    {/* The label and its actions trigger travel together,
+                        pinned to the lane edge but constrained to their own
+                        region. Previously the trigger sat at the region's right
+                        edge: a 32-second section at scrollLeft 0 put it ~340px
+                        beyond a 360px viewport, hiding both Loop and Rename
+                        until you discovered a horizontal scroll. */}
+                    <div
+                      data-section-pinned
+                      className="pointer-events-none sticky left-0 z-10 flex min-w-0 max-w-full items-center"
+                    >
+                      <span
+                        className={cn(
+                          "truncate px-2 text-small-strong leading-4",
+                          active ? "text-accent" : "text-secondary",
+                        )}
+                      >
+                        {section.label}
+                      </span>
+
+                      {onLoopSection || onRenameSection ? (
+                        <button
+                          data-section-actions
+                          type="button"
+                          ref={(node) => {
+                            if (node) sectionTriggerRefs.current.set(key, node);
+                            else sectionTriggerRefs.current.delete(key);
+                          }}
+                          onClick={() => openSectionActions(section)}
+                          aria-label={`Section ${section.label} actions`}
+                          aria-expanded={chosen}
+                          aria-controls={chosen ? panelId : undefined}
+                          title={`Section ${section.label} actions`}
+                          className={cn(
+                            "pointer-events-auto flex w-6 shrink-0 self-stretch items-center justify-center rounded-[3px] transition-[background-color,color] duration-150 ease-out focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent [&_svg]:size-3.5",
+                            chosen
+                              ? "bg-accent/25 text-accent"
+                              : "bg-control text-tertiary hover:text-primary",
+                          )}
+                        >
+                          <EllipsisIcon aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
 
           <div
             role="slider"
@@ -417,6 +784,112 @@ export function SessionTimeline({
           Loop from {formatTime(safeLoopStart)} to {formatTime(safeLoopEnd)}
         </span>
       ) : null}
+
+      {/* The panel sits below the lane rather than inside the region it acts
+          on: a region can be a few pixels wide, and the lane scrolls
+          horizontally, so anything anchored inside it is either unreadable or
+          scrolled off. It names its target instead. */}
+      {targetSection ? (
+        <div
+          ref={panelRef}
+          id={panelId}
+          role="group"
+          aria-labelledby={panelHeadingId}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            if (isRenaming) cancelRename();
+            else closeSectionActions();
+          }}
+          className="border-t border-separator px-3 py-2.5"
+        >
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h3 id={panelHeadingId} className="text-small-strong text-primary">
+              Section {targetSection.label}
+            </h3>
+            <p className="text-mini text-tertiary">
+              {targetSection.edited ? "Renamed by you" : "Detected structure"}
+              {" · "}
+              {formatTime(targetSection.startSec)}–{formatTime(targetSection.endSec)}
+            </p>
+          </div>
+
+          {isRenaming ? (
+            <div className="mt-2 flex flex-col gap-1.5 sm:max-w-sm">
+              <label htmlFor={renameFieldId} className="text-mini text-secondary">
+                Section name
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={renameInputRef}
+                  id={renameFieldId}
+                  value={draftLabel}
+                  onChange={(event) => {
+                    setDraftLabel(event.target.value);
+                    if (renameError) setRenameError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitRename();
+                    }
+                  }}
+                  maxLength={SECTION_LABEL_MAX_LENGTH}
+                  aria-invalid={renameError ? "true" : undefined}
+                  aria-describedby={renameError ? renameErrorId : undefined}
+                  className="h-10 min-w-0 flex-1 rounded-md border border-separator bg-background px-2.5 text-small text-primary outline-none focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+                />
+                <button type="button" onClick={commitRename} className="tool-button shrink-0">
+                  Save
+                </button>
+                <button type="button" onClick={cancelRename} className="tool-button shrink-0">
+                  Cancel
+                </button>
+              </div>
+              {renameError ? (
+                <p id={renameErrorId} className="text-mini text-amber-400">
+                  {renameError}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {onLoopSection ? (
+                <button
+                  type="button"
+                  onClick={() => onLoopSection(targetSection)}
+                  className="tool-button"
+                  aria-label={`Loop section ${targetSection.label}`}
+                >
+                  <Repeat2Icon aria-hidden="true" /> Loop section
+                </button>
+              ) : null}
+              {onRenameSection ? (
+                <button
+                  type="button"
+                  onClick={startRename}
+                  className="tool-button"
+                  aria-label={`Rename section ${targetSection.label}`}
+                >
+                  <PencilIcon aria-hidden="true" /> Rename section
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={closeSectionActions}
+                className="tool-button"
+                aria-label={`Close section ${targetSection.label} actions`}
+              >
+                <XIcon aria-hidden="true" /> Close
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <span role="status" aria-live="polite" className="sr-only">
+        {invalidationNotice}
+      </span>
     </section>
   );
 }

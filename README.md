@@ -15,6 +15,8 @@ with the macOS app and measured by the same benchmark (about 99% clean and
 ## Practice workspace
 
 - Duration-accurate waveform and chord timeline with seeking and editable chord corrections
+- Bar-numbered ruler and a bar-and-beat playhead readout, with a selectable metre
+- Arrangement lane: detected sections, renameable, with one-click looping of a section
 - Nashville-style root numbers and movable-do solfa shown alongside the original chord symbol
 - Clickable piano, guitar-fretboard, and bass-fretboard views, plus previous/current/next context
 - Pitch-preserving playback speed, whole-session key transposition, A/B looping, and a beat-aware metronome with 0–150% click volume
@@ -23,6 +25,27 @@ with the macOS app and measured by the same benchmark (about 99% clean and
 - Stem-aware analysis: full harmony from the mix/guitar/keys/other and honest root-only reading from bass
 - WAV or 256 kbps MP3 export of the currently audible mix, including the selected key change
 - Six-source local separation beta for drums, bass, vocals, guitar, piano/keys, and other
+
+## Arrangement detection
+
+Sections are read from the same beat-synchronous chroma the chord decoder
+already computes — a cosine self-similarity matrix, a Foote checkerboard-kernel
+novelty curve, and peak picking, with each surviving boundary confirmed by
+checking that what follows genuinely differs from what preceded. It runs in the
+existing analysis worker with no model download and no network.
+
+Sections are labelled `A`, `B`, `A2` rather than `Verse` and `Chorus`. A
+similarity read supports "this part comes back"; it does not support naming a
+part, which needs a trained model this project does not ship. Rename any
+section by double-clicking it, and the rename is recorded on the segment.
+
+The lane reports nothing at all — rather than guessing — when a song is too
+short to have structure, or when it loops one progression from start to finish.
+
+The metre is **not** detected. Bar numbers and the click accent follow the
+metre picker, which defaults to 4/4; guessing the metre wrong would renumber
+every bar in the song. The position of the bar line within the detected beats
+*is* estimated, from where the chord changes fall.
 
 The source-backed [Moises product teardown and roadmap](./report-source.md)
 documents the product research, the implemented separation decision, and the

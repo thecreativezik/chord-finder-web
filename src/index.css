@@ -229,6 +229,20 @@ input[type="text"]::placeholder {
     min-width: 2.5rem;
     min-height: 2.5rem;
   }
+
+  /* 36px reads correctly with a mouse; a finger needs 44px. The trigger takes
+     its height from the band, so only the width has to be stated. */
+  [data-section-band] {
+    height: 2.75rem;
+  }
+
+  [data-section-actions] {
+    width: 2.75rem;
+  }
+
+  [data-session-stats] select {
+    min-height: 2.75rem;
+  }
 }
 
 /* Prevent focus outlines from being clipped inside horizontally scrolling lanes. */
@@ -477,7 +491,7 @@ button {
   }
 
   [data-session-stats] {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.5rem;
     border-top: 0;
     padding-top: 0;
