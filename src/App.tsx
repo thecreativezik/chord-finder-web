@@ -20,6 +20,7 @@ import {
   parseTimeSignature,
   snapSections,
 } from "./analysis/beat-map";
+import { detectTempoRegions, formatTempoRange } from "./analysis/tempo-map";
 import { getHarmonicFunction } from "./analysis/harmonic-function";
 import { transposeChordSymbol } from "./analysis/chord-notes";
 import { NO_CHORD } from "./analysis/classify-chords";
@@ -234,6 +235,20 @@ export function App() {
     () => (result ? buildBeatMap(result.beats, timeSignature, downbeatPhase) : []),
     [downbeatPhase, result, timeSignature],
   );
+  // Tempo regions are derived from the same beat times, never stored, and
+  // recomputed when the metre changes because the minimum region length is
+  // expressed in bars. `result.bpm` is untouched.
+  const tempoRegions = useMemo(
+    () => (result ? detectTempoRegions(result.beats, timeSignature) : []),
+    [result, timeSignature],
+  );
+  const tempoChangeSummary = useMemo(() => {
+    if (tempoRegions.length < 2) return "";
+    const changes = tempoRegions.slice(1).map((region) => formatTime(region.startSec));
+    if (changes.length <= 2) return ` · tempo changes at ${changes.join(" and ")}`;
+    return ` · ${changes.length} tempo changes`;
+  }, [tempoRegions]);
+
   const keyedSections = useMemo(() => {
     if (!result) return [];
     const named = result.sections.map((section) => {
@@ -652,6 +667,7 @@ export function App() {
                       {sections.length > 0
                         ? ` · ${sections.length} sections`
                         : " · no distinct sections detected"}
+                      {tempoChangeSummary}
                     </p>
                   </div>
                   <button
@@ -676,7 +692,7 @@ export function App() {
                       clear that the confidence belongs to the chord. */}
                   <Stat label="Chord confidence" value={activeBaseSegment ? activeBaseSegment.edited ? "Edited" : `${Math.round(activeBaseSegment.confidence * 100)}%` : "—"} />
                   <KeyPicker tonic={selectedKeyTonic} scale={result.key.scale} semitones={transposeSemitones} onChange={changeSongKey} />
-                  <Stat label="Tempo" value={`${result.bpm} BPM`} />
+                  <Stat label="Tempo" value={formatTempoRange(tempoRegions, result.bpm)} />
                   <TimeSignaturePicker value={timeSignature} onChange={setTimeSignature} />
                 </div>
               </div>
