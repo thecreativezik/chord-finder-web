@@ -214,7 +214,7 @@ export function StemMixer({
                 // A separated stem knows which model made it. Surfaced on hover
                 // rather than in the row: the row already carries five states,
                 // and "which Demucs revision" is a question you go looking for.
-                const attribution = track.provenance ? describeProvenance(track.provenance) : undefined;
+                const attribution = describeProvenance(track.provenance);
                 const sourceStatusId = `${sourceGroupId}-status-${track.id}`;
 
                 return (

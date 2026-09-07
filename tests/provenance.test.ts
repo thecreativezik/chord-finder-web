@@ -156,6 +156,26 @@ describe("describeProvenance", () => {
     );
   });
 
+  it("degrades instead of throwing when the record is absent or malformed", () => {
+    // Called during render: throwing here takes down the session view, which
+    // is a disproportionate outcome for absent metadata. Vector reached this
+    // with a review fixture that predated the schema — the app failed to load
+    // rather than rendering without a tooltip.
+    const missing = undefined as unknown as Provenance;
+    expect(describeProvenance(missing)).toBeUndefined();
+    expect(describeProvenance(null as unknown as Provenance)).toBeUndefined();
+    expect(describeProvenance({} as Provenance)).toBeUndefined();
+    expect(
+      describeProvenance({
+        module: "chords",
+        source: "Bass",
+        engine: CHORD_ENGINE,
+        startedAt: 0,
+        durationMs: Number.NaN,
+      }),
+    ).toBe(`Bass · ${CHORD_ENGINE}`);
+  });
+
   it("omits a duration too short to be worth reading", () => {
     expect(describeProvenance(bassRootChords("Bass", 40).provenance)).toBe(
       `Bass · ${CHORD_ENGINE}`,

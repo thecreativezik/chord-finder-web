@@ -405,7 +405,7 @@ export function App() {
   // guard above — where root-only output was offered as editable chords.
   const rootOnlySource = isRootOnly(activeChords?.provenance);
   const sourceAnalysisMode: ChordAnalysisMode = rootOnlySource ? "bass-root" : "harmony";
-  const sourceAttribution = activeChords ? describeProvenance(activeChords.provenance) : undefined;
+  const sourceAttribution = describeProvenance(activeChords?.provenance);
 
   const updateChord = useCallback((symbol: string, target: ChordSegment) => {
     const storedSymbol = transposeChordSymbol(symbol, -transposeSemitones, originalPreferFlats);

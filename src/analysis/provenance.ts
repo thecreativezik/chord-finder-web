@@ -73,9 +73,20 @@ export function chordDecoderParams(
   return { decoder: analysisMode, tuningHz: Math.round(tuningHz * 10) / 10 };
 }
 
-/** One-line attribution for a tooltip: "Bass · htdemucs_6s@93972356 · 41.2s". */
-export function describeProvenance(provenance: Provenance): string {
+/**
+ * One-line attribution for a tooltip: "Bass · htdemucs_6s@93972356 · 41.2s".
+ *
+ * Tolerates a missing record even though the type requires one. This is called
+ * during render, so throwing here takes down the whole session view — a
+ * disproportionate outcome for absent metadata. Vector hit exactly this while
+ * reviewing with a substituted analysis worker whose fixture predated the
+ * schema: the app failed to load rather than rendering without a tooltip.
+ */
+export function describeProvenance(provenance: Provenance | null | undefined): string | undefined {
+  if (!provenance?.source || !provenance.engine) return undefined;
   const parts = [provenance.source, provenance.engine];
-  if (provenance.durationMs >= 100) parts.push(`${(provenance.durationMs / 1000).toFixed(1)}s`);
+  if (Number.isFinite(provenance.durationMs) && provenance.durationMs >= 100) {
+    parts.push(`${(provenance.durationMs / 1000).toFixed(1)}s`);
+  }
   return parts.join(" · ");
 }
