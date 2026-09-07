@@ -11,6 +11,7 @@ import {
   Volume2Icon,
 } from "lucide-react";
 
+import { describeProvenance } from "../analysis/provenance";
 import { cn } from "../cn";
 import type { ExportFormat, ExportStage } from "../audio/export-mix";
 import type { SeparationStatus } from "../separation/use-separation";
@@ -210,6 +211,10 @@ export function StemMixer({
                 const analyzing = chordSourceStatus.state === "loading" && chordSourceStatus.trackId === track.id;
                 const unavailableReason = unavailableChordSourceReason(track);
                 const usesBassRootMode = track.kind === "bass";
+                // A separated stem knows which model made it. Surfaced on hover
+                // rather than in the row: the row already carries five states,
+                // and "which Demucs revision" is a question you go looking for.
+                const attribution = describeProvenance(track.provenance);
                 const sourceStatusId = `${sourceGroupId}-status-${track.id}`;
 
                 return (
@@ -242,7 +247,7 @@ export function StemMixer({
                         <p
                           id={sourceStatusId}
                           className={cn("flex items-center gap-1 truncate text-[9px] uppercase leading-3 tracking-[0.1em] text-tertiary", statusIsWarning && "text-amber-400")}
-                          title={unavailableReason ?? (statusIsWarning ? status : undefined)}
+                          title={unavailableReason ?? (statusIsWarning ? status : attribution)}
                         >
                           {statusIsWarning ? <TriangleAlertIcon className="size-2.5 shrink-0" aria-hidden="true" /> : null}
                           {analyzing ? <LoaderCircleIcon className="size-2.5 shrink-0 animate-spin" aria-hidden="true" /> : null}

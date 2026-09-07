@@ -12,7 +12,7 @@ import type {
   AnalysisStatus,
   AnalyzeRequest,
   ChordAnalysisMode,
-  ChordSegment,
+  DerivedChords,
   WorkerResponse,
 } from "../types";
 
@@ -143,14 +143,28 @@ export function useAnalysis(): UseAnalysis {
   return { status, analyzeFile, reset };
 }
 
-/** Analyze harmony for an aligned stem while preserving the master beat grid. */
+export interface ChordBlobOptions {
+  /** The master beat grid, so a stem's chords stay aligned to the song. */
+  beats: number[];
+  /** Track name recorded in the returned provenance. */
+  source: string;
+  analysisMode?: ChordAnalysisMode;
+  onProgress?: (progress: number) => void;
+  signal?: AbortSignal;
+}
+
+/**
+ * Analyze harmony for an aligned stem while preserving the master beat grid.
+ *
+ * Resolves to the segments *and* the record of which decoder produced them.
+ * Callers must store the pair: `analysisMode` is not recoverable from the
+ * segments, and re-deriving it from the current selection is what used to let
+ * root-only output be presented as editable chords.
+ */
 export async function analyzeChordBlob(
   blob: Blob,
-  beats: number[],
-  onProgress?: (progress: number) => void,
-  signal?: AbortSignal,
-  analysisMode: ChordAnalysisMode = "harmony",
-): Promise<ChordSegment[]> {
+  { beats, source, analysisMode = "harmony", onProgress, signal }: ChordBlobOptions,
+): Promise<DerivedChords> {
   const decoded = await decodeAudioMono(blob);
   if (signal?.aborted) throw new DOMException("Chord analysis cancelled", "AbortError");
 
@@ -172,7 +186,7 @@ export async function analyzeChordBlob(
         onProgress?.(message.progress);
       } else if (message.type === "chord-result") {
         finish();
-        resolve(message.segments);
+        resolve({ segments: message.segments, provenance: message.provenance });
       } else if (message.type === "error") {
         finish();
         reject(new Error(message.message));
@@ -185,6 +199,7 @@ export async function analyzeChordBlob(
     const request: AnalyzeRequest = {
       mode: "chords",
       analysisMode,
+      source,
       channelData: decoded.channelData,
       sampleRate: SESSION_SAMPLE_RATE,
       durationSec: decoded.durationSec,

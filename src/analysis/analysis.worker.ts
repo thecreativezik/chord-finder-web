@@ -11,11 +11,18 @@ import { classifyChords } from "./classify-chords";
 import { classifyBassRoots } from "./classify-bass-roots";
 import { detectSections } from "./detect-sections";
 import { estimateTuning, extractChromaFrames } from "./extract-chroma";
+import {
+  CHORD_ENGINE,
+  chordDecoderParams,
+  createProvenance,
+  ORIGINAL_MIX_SOURCE,
+} from "./provenance";
 import type {
   AnalysisResult,
   AnalyzeRequest,
   ChordAnalysisMode,
   ChordSegment,
+  Provenance,
   WorkerResponse,
 } from "../types";
 
@@ -65,6 +72,7 @@ function analyze(
   sampleRate: number,
   durationSec: number,
 ): AnalysisResult {
+  const startedAt = Date.now();
   post({ type: "progress", stage: "extracting", progress: 0.02 });
 
   const audioVector = essentiaInstance.arrayToVector(channelData);
@@ -124,6 +132,15 @@ function analyze(
     waveform,
     segments,
     sections,
+    // The arrangement is read off the same chroma as the harmony in this one
+    // run, so it shares this record rather than carrying a second copy.
+    provenance: createProvenance({
+      module: "beats-and-chords",
+      source: ORIGINAL_MIX_SOURCE,
+      engine: CHORD_ENGINE,
+      params: chordDecoderParams("harmony", tuningHz),
+      startedAt,
+    }),
   };
 }
 
@@ -134,7 +151,9 @@ function analyzeChords(
   durationSec: number,
   beats: number[],
   analysisMode: ChordAnalysisMode,
-): ChordSegment[] {
+  source: string,
+): { segments: ChordSegment[]; provenance: Provenance } {
+  const startedAt = Date.now();
   post({ type: "progress", stage: "chords", progress: 0.05 });
   const audioVector = essentiaInstance.arrayToVector(channelData);
   const tuningHz = estimateTuning(essentiaInstance, audioVector);
@@ -150,7 +169,16 @@ function analyzeChords(
     durationSec,
   });
   post({ type: "progress", stage: "done", progress: 1 });
-  return segments;
+  return {
+    segments,
+    provenance: createProvenance({
+      module: "chords",
+      source,
+      engine: CHORD_ENGINE,
+      params: chordDecoderParams(analysisMode, tuningHz),
+      startedAt,
+    }),
+  };
 }
 
 self.onmessage = (event: MessageEvent<AnalyzeRequest>) => {
@@ -159,15 +187,16 @@ self.onmessage = (event: MessageEvent<AnalyzeRequest>) => {
   try {
     if (!essentia) essentia = new Essentia(EssentiaWASM);
     if (request.mode === "chords") {
-      const segments = analyzeChords(
+      const { segments, provenance } = analyzeChords(
         essentia,
         channelData,
         sampleRate,
         durationSec,
         request.beats,
         request.analysisMode,
+        request.source,
       );
-      post({ type: "chord-result", segments });
+      post({ type: "chord-result", segments, provenance });
       return;
     }
     const result = analyze(essentia, channelData, sampleRate, durationSec);

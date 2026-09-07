@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  createProvenance,
+  ORIGINAL_MIX_SOURCE,
+  stemSeparationEngine,
+} from "../analysis/provenance";
 import { decodeAudioStereo } from "../audio/decode-audio";
 import type { StemAssetInput, StemKind } from "../components/use-stem-mixer";
 import { DemucsWorkerClient } from "./demucs-worker-client";
@@ -233,6 +238,7 @@ export function useSeparation(onComplete: (assets: StemAssetInput[]) => void): {
     }
 
     stopActiveJob();
+    const startedAt = Date.now();
     const job = jobRef.current;
     const abort = new AbortController();
     abortRef.current = abort;
@@ -306,11 +312,21 @@ export function useSeparation(onComplete: (assets: StemAssetInput[]) => void): {
       encoder = null;
       if (job !== jobRef.current) return;
 
+      // Each stem records the model that produced it. The revision and SHA-256
+      // are pinned in this module, so without this the audio leaves the job
+      // with no way to say what made it.
       const assets: StemAssetInput[] = encoded.map(({ name, blob: stemBlob }) => ({
         name: displayName(name),
         kind: stemKind(name),
         blob: stemBlob,
         origin: "separated",
+        provenance: createProvenance({
+          module: "stem-separation",
+          source: ORIGINAL_MIX_SOURCE,
+          engine: stemSeparationEngine(MODEL_REVISION),
+          params: { output: name, stems: STEMS.length },
+          startedAt,
+        }),
       }));
       callbackRef.current(assets);
       setStatus({ state: "ready", stemCount: assets.length });
